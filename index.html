@@ -4,15 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bolão Mega Sena</title>
-    <!-- Tailwind CSS para estilização rápida -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .hidden { display: none !important; }
         .fade-in { animation: fadeIn 0.3s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        /* Remove setas padrões de input type=number */
-        input::-webkit-outer-spin-button,
-        input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         input[type=number] { -moz-appearance: textfield; }
     </style>
 </head>
@@ -25,7 +22,8 @@
 
     let currentData = {}; 
     let adminToken = "";
-    let userSession = {}; // Guarda os dados do usuário logado no momento
+    let userSession = {};
+    let chavePixAtual = "Não configurada";
 
     async function apiCall(action, payload = {}) {
         document.getElementById('loading').classList.remove('hidden');
@@ -56,6 +54,30 @@
     function goToLogin() { showSection('sec-login'); }
     function goToAdmin() { showSection('sec-admin-login'); }
 
+    // RENDERIZADOR DE JOGOS EM BOLINHAS VERDES
+    function construirBolinhasJogos(jogosStr) {
+        if (!jogosStr || jogosStr.trim() === "" || jogosStr === "Nenhum cadastrado") {
+            return `<p class="text-sm text-gray-500 italic">Nenhum número fixo cadastrado (Modo Aleatório ativo).</p>`;
+        }
+        
+        const jogos = jogosStr.split(" | ");
+        return jogos.map((jogo, index) => {
+            const dezenas = jogo.split(",").map(d => d.trim());
+            const bolinhasHtml = dezenas.map(num => `
+                <div class="w-8 h-8 md:w-9 md:h-9 bg-gradient-to-br from-green-500 to-green-700 text-white rounded-full flex items-center justify-center font-bold font-mono text-sm shadow-md border border-green-600">
+                    ${num}
+                </div>
+            `).join("");
+
+            return `
+                <div class="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                    <span class="text-xs font-bold text-green-800 block mb-1.5 uppercase tracking-wider">Jogo ${index + 1}</span>
+                    <div class="flex flex-wrap gap-2">${bolinhasHtml}</div>
+                </div>
+            `;
+        }).join("<div class='my-2'></div>"); // Quebra de linha física entre jogo 1 e jogo 2 se for dobrado
+    }
+
     // LOGIN
     async function doLogin() {
         const cel = document.getElementById('login-celular').value;
@@ -65,6 +87,7 @@
         const res = await apiCall("login", { celular: cel, dataNascimento: dt });
         if(res.success) {
             userSession = res.user;
+            chavePixAtual = res.chavePix || "Não configurada";
             atualizarInterfaceDashboard();
             await carregarHistoricosPainel();
             showSection('sec-dashboard');
@@ -78,13 +101,26 @@
         document.getElementById('dash-plano').innerText = userSession.plano;
         document.getElementById('dash-tipo').innerText = userSession.tipoAposta;
         document.getElementById('dash-apostas').innerText = userSession.apostasRestantes;
-        document.getElementById('dash-jogos').innerText = userSession.jogos || "Nenhum cadastrado";
         document.getElementById('dash-futuro').innerText = userSession.proximoPlano || "Nenhuma alteração agendada";
         
-        // Seta os valores padrão nos campos de edição interna
+        // Injeta a renderização visual das dezenas em círculos
+        document.getElementById('dash-jogos-container').innerHTML = construirBolinhasJogos(userSession.jogos);
+        
+        // Injeta o valor da chave PIX no campo de cópia
+        document.getElementById('dash-pix-key').value = chavePixAtual;
+
         document.getElementById('dash-edit-tipo').value = userSession.tipoAposta;
         document.getElementById('dash-next-plano').value = userSession.proximoPlano || "";
         toggleEditNumerosSorte();
+    }
+
+    // COPIAR CHAVE PIX
+    function copiarChavePix() {
+        const inputPix = document.getElementById('dash-pix-key');
+        inputPix.select();
+        inputPix.setSelectionRange(0, 99999);
+        navigator.clipboard.writeText(inputPix.value);
+        alert("Chave PIX copiada com sucesso! Transfira o valor do plano para garantir seus créditos.");
     }
 
     // REGISTRO - ETAPA 1
@@ -99,7 +135,7 @@
         showSection('sec-register-2');
     }
 
-    // REGISTRO - ETAPA 2 (Plano)
+    // REGISTRO - ETAPA 2
     function selectPlan(plano) {
         currentData.plano = plano;
         showSection('sec-register-3');
@@ -110,7 +146,7 @@
         }
     }
 
-    // REGISTRO - ETAPA 3 (Tipo de Aposta)
+    // REGISTRO - ETAPA 3
     function toggleNumerosSorte() {
         const tipo = document.getElementById('reg-tipo').value;
         if(tipo === "Número da sorte") {
@@ -120,7 +156,6 @@
         }
     }
 
-    // CONTROLE DE EDICAO DE NUMEROS NO DASHBOARD
     function toggleEditNumerosSorte() {
         const tipo = document.getElementById('dash-edit-tipo').value;
         const container = document.getElementById('dash-numeros-sorte-container');
@@ -136,11 +171,9 @@
         }
     }
 
-    // AUXILIAR: VALIDAÇÃO DOS QUADRADOS DE DEZENAS
     function capturarEValidarJogos(className, identificadorJogo) {
         const inputs = document.querySelectorAll(className);
         let numeros = [];
-
         for (let input of inputs) {
             let valor = parseInt(input.value, 10);
             if (isNaN(valor) || valor < 1 || valor > 60) {
@@ -191,10 +224,6 @@
         await doLogin();
     }
 
-    // ============================================
-    // NOVAS FUNÇÕES DO PARTICIPANTE (DASHBOARD)
-    // ============================================
-    
     async function dispararAvisoPagamento() {
         if(confirm("Deseja notificar o administrador que você realizou um novo pagamento via PIX?")) {
             const res = await apiCall("notifyPaymentIntent", { celular: userSession.celular, nome: userSession.nome });
@@ -245,11 +274,10 @@
     async function carregarHistoricosPainel() {
         const res = await apiCall("getParticipantHistory", { celular: userSession.celular });
         if(res.success) {
-            // Renderiza Histórico de Pagamentos (Últimos 4)
             const areaPagamentos = document.getElementById('hist-pagamentos-list');
             areaPagamentos.innerHTML = "";
             if(res.pagamentos.length === 0) {
-                areaPagamentos.innerHTML = `<p class="text-sm text-gray-500">Nenhum pagamento registrado recentemente.</p>`;
+                areaPagamentos.innerHTML = `<p class="text-sm text-gray-500">Nenhum pagamento registrado.</p>`;
             } else {
                 res.pagamentos.forEach(p => {
                     areaPagamentos.innerHTML += `
@@ -261,14 +289,12 @@
                 });
             }
 
-            // Renderiza Últimos 10 Sorteios e Jogos do Grupo
             const areaSorteios = document.getElementById('hist-sorteios-container');
             areaSorteios.innerHTML = "";
             if(res.sorteios.length === 0) {
-                areaSorteios.innerHTML = `<p class="text-sm text-gray-500 text-center py-4">Nenhum sorteio registrado no sistema até o momento.</p>`;
+                areaSorteios.innerHTML = `<p class="text-sm text-gray-500 text-center py-4">Nenhum sorteio registrado no sistema.</p>`;
             } else {
                 res.sorteios.forEach(s => {
-                    // Busca as apostas vinculadas a esse sorteio específico
                     const apostasDaRodada = res.apostasDetalhe[s.idSorteio] || [];
                     let apostasHtml = "";
 
@@ -309,9 +335,7 @@
         }
     }
 
-    // ============================================
     // ADMIN FUNCTIONS
-    // ============================================
     async function doAdminLogin() {
         const user = document.getElementById('admin-user').value;
         const pass = document.getElementById('admin-pass').value;
@@ -327,7 +351,6 @@
     async function loadAdminData() {
         const res = await apiCall("getAdminData", { token: adminToken });
         if(res.success) {
-            // Tabela de Participantes
             const tbody = document.getElementById('admin-table-body');
             tbody.innerHTML = "";
             res.participantes.forEach(p => {
@@ -342,55 +365,106 @@
                 `;
             });
 
-            // Popula Dropdown de Apuração de Rodadas Abertas
             const selectRodada = document.getElementById('adm-concurso-id');
-            selectRodada.innerHTML = `<option value="">-- Selecione a Rodada Gerada --</option>`;
+            selectRodada.innerHTML = `<option value="">-- Selecione a Rodada --</option>`;
             if(res.rodadasAbertas && res.rodadasAbertas.length > 0) {
                 res.rodadasAbertas.forEach(r => {
                     selectRodada.innerHTML += `<option value="${r}">${r}</option>`;
                 });
             }
 
+            document.getElementById('adm-pix-key').value = res.chavePix || "";
             showSection('sec-admin-dash');
         }
     }
 
-    async function registrarPagamento(celular) {
-        if(confirm("Confirmar a validação do pagamento deste usuário? Isso adicionará +4 créditos de forma acumulativa ao saldo atual dele.")) {
-            const res = await apiCall("registerPayment", { token: adminToken, celular });
-            alert(res.message);
-            loadAdminData();
-        }
+    async function salvarPixKeyAdmin() {
+        const chave = document.getElementById('adm-pix-key').value;
+        const res = await apiCall("savePixKey", { token: adminToken, chavePix: chave });
+        alert(res.message);
     }
 
     async function fazerApostaGeral() {
-        if(confirm("Deseja gerar e consolidar a rodada de jogos de todos os usuários com créditos ativos? (Isso consumirá 1 crédito de cada participante e abrirá um ID de rodada para apuração posterior)")) {
+        if(confirm("Deseja gerar e consolidar a rodada de jogos de todos os usuários com créditos ativos?")) {
             const res = await apiCall("fazerAposta", { token: adminToken });
             alert(res.message);
             loadAdminData();
         }
     }
 
-    async function enviarApuracaoSorteio() {
+    // PROCESSO DE APURAÇÃO EM 2 ETAPAS (NOVO)
+    async function executarEtapa1Conferencia() {
+        const idSorteio = document.getElementById('adm-concurso-id').value;
+        const dezenas = document.getElementById('adm-dezenas-sorteadas').value;
+
+        if(!idSorteio || !dezenas) return alert("Selecione a rodada e digite os números sorteados para conferir!");
+
+        const res = await apiCall("verificarGanhadoresAdmin", {
+            token: adminToken,
+            idSorteio: idSorteio,
+            numerosSorteados: dezenas
+        });
+
+        if(res.success) {
+            alert(res.message);
+            // Libera o campo de prêmio e o botão de rateio final
+            document.getElementById('adm-premio-total').disabled = false;
+            document.getElementById('btn-etapa2-rateio').disabled = false;
+            document.getElementById('btn-etapa2-rateio').classList.remove('bg-gray-400', 'cursor-not-allowed');
+            document.getElementById('btn-etapa2-rateio').classList.add('bg-amber-600', 'hover:bg-amber-700');
+        } else {
+            alert(res.message);
+        }
+    }
+
+    async function executarEtapa2Rateio() {
         const idSorteio = document.getElementById('adm-concurso-id').value;
         const dezenas = document.getElementById('adm-dezenas-sorteadas').value;
         const premioTotal = document.getElementById('adm-premio-total').value;
 
-        if(!idSorteio || !dezenas) return alert("Selecione a rodada e digite as dezenas sorteadas!");
+        if(!premioTotal || parseFloat(premioTotal) < 0) return alert("Por favor, preencha o valor do prêmio!");
 
-        if(confirm(`Confirmar o processamento do sorteio para a rodada ${idSorteio}? O sistema conferirá os acertos e distribuirá o prêmio proporcionalmente.`)) {
-            const res = await apiCall("informarSorteioAdmin", {
-                token: adminToken,
-                idSorteio: idSorteio,
-                numerosSorteados: dezenas,
-                premioTotal: premioTotal || 0
+        const res = await apiCall("finalizarRateioAdmin", {
+            token: adminToken,
+            idSorteio: idSorteio,
+            numerosSorteados: dezenas,
+            premioTotal: premioTotal
+        });
+
+        if(res.success) {
+            // Monta o Modal de Resumo do Rateio na Tela do Admin
+            document.getElementById('modal-total-premio').innerText = "R$ " + Number(res.resumo.premioTotal).toFixed(2);
+            document.getElementById('modal-total-participantes').innerText = res.resumo.totalParticipantes;
+            
+            const listaModal = document.getElementById('modal-lista-rateio');
+            listaModal.innerHTML = "";
+            res.resumo.lista.forEach(item => {
+                listaModal.innerHTML += `
+                    <div class="flex justify-between border-b py-1.5 text-sm">
+                        <span class="font-medium text-gray-700">${item.nome} (${item.plano})</span>
+                        <span class="font-mono text-green-700 font-bold">R$ ${Number(item.valorReceber).toFixed(2)}</span>
+                    </div>
+                `;
             });
-            alert(res.message);
-            // Limpa formulário e recarrega painel admin
-            document.getElementById('adm-dezenas-sorteadas').value = "";
+
+            // Exibe a janela modal na tela
+            document.getElementById('modal-rateio-container').classList.remove('hidden');
+            
+            // Reseta controles de proteção
+            document.getElementById('adm-premio-total').disabled = true;
             document.getElementById('adm-premio-total').value = "";
+            document.getElementById('adm-dezenas-sorteadas').value = "";
+            document.getElementById('btn-etapa2-rateio').disabled = true;
+            document.getElementById('btn-etapa2-rateio').classList.add('bg-gray-400', 'cursor-not-allowed');
+            
             loadAdminData();
+        } else {
+            alert(res.message);
         }
+    }
+
+    function fecharModalRateio() {
+        document.getElementById('modal-rateio-container').classList.add('hidden');
     }
 </script>
 
@@ -403,9 +477,9 @@
     <section id="sec-login">
         <h2 class="text-xl font-semibold mb-4 text-center">Acessar Área do Participante</h2>
         <div class="space-y-4">
-            <input type="text" id="login-celular" placeholder="Número do Celular (com DDD)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500 focus:outline-none">
-            <input type="date" id="login-data" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500 focus:outline-none">
-            <button onclick="doLogin()" class="w-full bg-green-600 text-white p-3 rounded font-bold hover:bg-green-700 transition">Entrar no Painel</button>
+            <input type="text" id="login-celular" placeholder="Número do Celular (com DDD)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+            <input type="date" id="login-data" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+            <button onclick="doLogin()" class="w-full bg-green-600 text-white p-3 rounded font-bold hover:bg-green-700">Entrar no Painel</button>
         </div>
         <div class="mt-6 text-center space-y-2">
             <p>Não tem cadastro? <button onclick="goToRegister()" class="text-blue-600 underline font-semibold">Cadastre-se aqui</button></p>
@@ -417,7 +491,7 @@
     <section id="sec-register-1" class="hidden">
         <h2 class="text-xl font-semibold mb-2">Novo Cadastro</h2>
         <div class="bg-yellow-100 text-yellow-800 p-3 rounded mb-4 text-sm">
-            <strong>Atenção:</strong> Informe um número que seja do WhatsApp válido. Ele será monitorado para envios e atualizações das rodadas.
+            <strong>Atenção:</strong> Informe seu WhatsApp real para receber avisos e notificações de rateios premiados!
         </div>
         <div class="space-y-4">
             <input type="text" id="reg-nome" placeholder="Nome Completo" class="w-full p-2 border rounded">
@@ -438,54 +512,46 @@
                 <h3 class="text-2xl font-bold text-gray-800">Padrão</h3>
                 <p class="text-blue-600 font-bold text-xl mb-3">R$ 28,00 /mês</p>
                 <p class="text-gray-600 mb-4 text-sm">Toda semana uma aposta correndo em seu nome, durante 4 semanas seguidas.</p>
-                <div class="mt-auto bg-gray-50 p-3 rounded text-xs text-gray-700">
-                    Garante direito a 1 cota de premiação proporcional por rodada ativa.
-                </div>
             </div>
             <div class="border-2 rounded-lg p-5 cursor-pointer hover:border-purple-500 hover:shadow-lg transition bg-white border-purple-100 flex flex-col" onclick="selectPlan('Dobrado')">
                 <h3 class="text-2xl font-bold text-purple-700">Dobrado</h3>
                 <p class="text-purple-600 font-bold text-xl mb-3">R$ 54,00 /mês</p>
                 <p class="text-gray-600 mb-4 text-sm">Toda semana duas apostas correndo em seu nome, durante 4 semanas seguidas.</p>
-                <div class="mt-auto bg-purple-50 p-3 rounded text-xs text-gray-700">
-                    <strong>Vantagem:</strong> Recebe o <strong>dobro do valor</strong> de rateio de prêmios comparado ao plano Padrão!
-                </div>
             </div>
         </div>
-        <button onclick="showSection('sec-register-1')" class="mt-6 text-gray-600 hover:underline">← Voltar para dados básicos</button>
+        <button onclick="showSection('sec-register-1')" class="mt-6 text-gray-600 hover:underline">← Voltar</button>
     </section>
 
     <!-- SEÇÃO 4: REGISTRO (TIPO DE APOSTA) -->
     <section id="sec-register-3" class="hidden">
         <h2 class="text-xl font-semibold mb-4">Como deseja gerar seus jogos?</h2>
-        <select id="reg-tipo" class="w-full p-2 border rounded mb-6 focus:outline-none focus:ring-2 focus:ring-green-500" onchange="toggleNumerosSorte()">
-            <option value="Aleatório">Aleatório (O sistema gera de surpresinha automática a cada sorteio)</option>
+        <select id="reg-tipo" class="w-full p-2 border rounded mb-6 focus:ring-2 focus:ring-green-500" onchange="toggleNumerosSorte()">
+            <option value="Aleatório">Aleatório (O sistema gera de surpresinha automática)</option>
             <option value="Número da sorte">Número da Sorte (Eu quero escolher minhas dezenas fixas)</option>
         </select>
 
         <div id="numeros-sorte-container" class="hidden bg-gray-50 p-4 border rounded mb-6">
-            <p class="text-sm text-gray-600 mb-4 text-center">Insira 6 números de <strong>01 a 60</strong> por jogo:</p>
-            
             <div class="mb-6">
                 <label class="block font-bold mb-2 text-sm text-gray-700">Dezenas do Jogo 1</label>
                 <div class="flex gap-2 justify-center">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-base focus:border-green-500 focus:outline-none bg-white j1-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-base focus:border-green-500 focus:outline-none bg-white j1-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-base focus:border-green-500 focus:outline-none bg-white j1-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-base focus:border-green-500 focus:outline-none bg-white j1-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-base focus:border-green-500 focus:outline-none bg-white j1-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-base focus:border-green-500 focus:outline-none bg-white j1-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-gray-300 rounded-lg font-bold j1-num bg-white">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-gray-300 rounded-lg font-bold j1-num bg-white">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-gray-300 rounded-lg font-bold j1-num bg-white">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-gray-300 rounded-lg font-bold j1-num bg-white">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-gray-300 rounded-lg font-bold j1-num bg-white">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-gray-300 rounded-lg font-bold j1-num bg-white">
                 </div>
             </div>
 
             <div id="jogo2-container" class="hidden mb-4">
                 <label class="block font-bold mb-2 text-sm text-purple-700">Dezenas do Jogo 2 (Plano Dobrado)</label>
                 <div class="flex gap-2 justify-center">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-base focus:border-purple-500 focus:outline-none bg-white j2-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-base focus:border-purple-500 focus:outline-none bg-white j2-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-base focus:border-purple-500 focus:outline-none bg-white j2-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-base focus:border-purple-500 focus:outline-none bg-white j2-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-base focus:border-purple-500 focus:outline-none bg-white j2-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-base focus:border-purple-500 focus:outline-none bg-white j2-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-purple-300 rounded-lg font-bold j2-num bg-white">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-purple-300 rounded-lg font-bold j2-num bg-white">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-purple-300 rounded-lg font-bold j2-num bg-white">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-purple-300 rounded-lg font-bold j2-num bg-white">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-purple-300 rounded-lg font-bold j2-num bg-white">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-purple-300 rounded-lg font-bold j2-num bg-white">
                 </div>
             </div>
         </div>
@@ -500,37 +566,48 @@
     <section id="sec-dashboard" class="hidden">
         <div class="flex justify-between items-center mb-4 border-b pb-2">
             <h2 class="text-2xl font-bold">Olá, <span id="dash-nome" class="text-green-700"></span>!</h2>
-            <button onclick="goToLogin()" class="bg-gray-200 text-gray-700 px-3 py-1 text-sm rounded hover:bg-gray-300 font-medium">Sair da Conta</button>
+            <button onclick="goToLogin()" class="bg-gray-200 text-gray-700 px-3 py-1 text-sm rounded hover:bg-gray-300 font-medium">Sair</button>
         </div>
 
-        <!-- GRID PRINCIPAL DE CONFIGURAÇÃO -->
         <div class="grid md:grid-cols-3 gap-4 mb-6">
-            <!-- STATUS ATUAL -->
-            <div class="bg-white border rounded-xl p-4 shadow-sm md:col-span-2 space-y-1.5">
-                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider border-b pb-1 mb-2">Seu Plano Vigente</h3>
+            <!-- DADOS DO PLANO -->
+            <div class="bg-white border rounded-xl p-4 shadow-sm md:col-span-2 space-y-2">
+                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider border-b pb-1">Seu Plano Vigente</h3>
                 <p class="text-sm"><strong>Plano Atual:</strong> <span id="dash-plano" class="font-medium"></span></p>
                 <p class="text-sm"><strong>Tipo de Processamento:</strong> <span id="dash-tipo" class="font-medium"></span></p>
-                <p class="text-sm"><strong>Créditos Restantes (Rodadas Pagas):</strong> <span id="dash-apostas" class="font-bold text-blue-600 text-base"></span></p>
-                <p class="text-sm truncate"><strong>Seus Números Cadastrados:</strong> <br><span id="dash-jogos" class="font-mono text-xs text-gray-600 bg-gray-50 p-1 rounded block mt-1 overflow-x-auto whitespace-nowrap"></span></p>
-                <p class="text-xs text-purple-700 pt-1"><strong>Agendado p/ Próximo Ciclo:</strong> <span id="dash-futuro" class="font-bold"></span></p>
+                <p class="text-sm"><strong>Créditos Restantes:</strong> <span id="dash-apostas" class="font-bold text-blue-600 text-base"></span> rodadas</p>
+                <p class="text-xs text-purple-700"><strong>Agendado Próximo Ciclo:</strong> <span id="dash-futuro" class="font-bold"></span></p>
+                
+                <!-- CONTAINER FORMATADO DAS BOLINHAS VERDES -->
+                <div class="pt-2">
+                    <strong class="text-sm text-gray-700 block mb-1">Seus Números Cadastrados:</strong>
+                    <div id="dash-jogos-container" class="space-y-2"></div>
+                </div>
             </div>
 
-            <!-- BOTÃO INFORMAR PAGAMENTO MÚLTIPLO -->
+            <!-- QUADRO INFORMAR PAGAMENTO COM COPIA DE CHAVE PIX -->
             <div class="bg-gradient-to-br from-green-50 to-emerald-100 border border-green-200 rounded-xl p-4 flex flex-col justify-between shadow-sm">
                 <div>
                     <h4 class="font-bold text-green-900 text-sm uppercase tracking-wider">Renovação / Créditos</h4>
-                    <p class="text-xs text-green-800 mt-1">Fez um novo PIX? Avise o administrador para somar mais +4 rodadas na sua conta de forma acumulativa.</p>
+                    <p class="text-xs text-green-800 mt-1">Transfira o valor do plano e avise o administrador para liberar mais +4 rodadas acumalativas.</p>
+                    
+                    <!-- CAMPO DA CHAVE PIX REQUISITADA -->
+                    <div class="mt-3 bg-white p-2 rounded-lg border border-green-200 shadow-sm">
+                        <label class="block text-[10px] font-bold uppercase tracking-wide text-green-800 mb-0.5">Chave PIX do Bolão:</label>
+                        <div class="flex gap-1.5 items-center">
+                            <input type="text" id="dash-pix-key" readonly class="w-full text-xs font-mono font-bold bg-gray-50 border p-1 rounded text-gray-700 select-all focus:outline-none">
+                            <button onclick="copiarChavePix()" class="bg-green-700 text-white font-bold text-[11px] px-2 py-1 rounded shadow hover:bg-green-800 shrink-0">Copiar</button>
+                        </div>
+                    </div>
                 </div>
-                <button onclick="dispararAvisoPagamento()" class="w-full bg-green-600 text-white font-bold text-sm py-2 px-3 rounded-lg shadow hover:bg-green-700 transition mt-3">👉 Informar Pagamento</button>
+                <button onclick="dispararAvisoPagamento()" class="w-full bg-green-600 text-white font-bold text-sm py-2 px-3 rounded-lg shadow hover:bg-green-700 transition mt-4">👉 Informar Pagamento</button>
             </div>
         </div>
 
-        <!-- ABAS DE EDIÇÃO DINÂMICA -->
+        <!-- SEÇÕES DE EDIÇÃO -->
         <div class="grid md:grid-cols-2 gap-4 mb-6">
-            <!-- GERENCIAR NÚMEROS DA SORTE -->
             <div class="bg-gray-50 p-4 border rounded-xl shadow-sm">
                 <h3 class="font-bold text-gray-800 text-sm mb-2">Alterar Meus Números da Sorte</h3>
-                <label class="block text-xs text-gray-500 mb-1">Mudar Modo de Jogo:</label>
                 <select id="dash-edit-tipo" class="w-full p-2 text-sm border rounded mb-3 bg-white" onchange="toggleEditNumerosSorte()">
                     <option value="Aleatório">Aleatório (Surpresinha Semanal)</option>
                     <option value="Número da sorte">Número da Sorte (Fixo Escolhido)</option>
@@ -563,12 +640,9 @@
                 <button onclick="salvarAlteracaoJogos()" class="mt-3 w-full bg-blue-600 text-white text-xs font-bold py-1.5 rounded hover:bg-blue-700">Salvar Mudança de Jogo</button>
             </div>
 
-            <!-- ALTERAÇÃO DE PLANO FUTURO -->
             <div class="bg-gray-50 p-4 border rounded-xl shadow-sm flex flex-col justify-between">
                 <div>
                     <h3 class="font-bold text-gray-800 text-sm mb-1">Alterar Plano para o Próximo Ciclo</h3>
-                    <p class="text-xs text-gray-500 mb-3">A transição só entra em vigor automaticamente quando suas apostas restantes atuais chegarem a zero.</p>
-                    <label class="block text-xs text-gray-600 mb-1">Escolher Plano Futuro:</label>
                     <select id="dash-next-plano" class="w-full p-2 text-sm border rounded bg-white">
                         <option value="">Manter o mesmo plano atual</option>
                         <option value="Padrão">Mudar para Plano Padrão (R$ 28,00)</option>
@@ -579,22 +653,14 @@
             </div>
         </div>
 
-        <!-- SEÇÃO HISTÓRICOS COMPARTILHADOS -->
         <div class="grid md:grid-cols-3 gap-4 border-t pt-4">
-            <!-- ÚLTIMOS RECARGAS (LADO ESQUERDO) -->
             <div class="space-y-2 md:col-span-1">
                 <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Últimas Recargas (Max 4)</h3>
-                <div id="hist-pagamentos-list" class="space-y-2">
-                    <!-- Dinâmico JS -->
-                </div>
+                <div id="hist-pagamentos-list" class="space-y-2"></div>
             </div>
-
-            <!-- HISTÓRICO DE SORTEIOS E JOGOS DO GRUPO (DIREITA COMPRIDA) -->
             <div class="space-y-3 md:col-span-2">
-                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Mural dos Últimos 10 Sorteios e Grupos</h3>
-                <div id="hist-sorteios-container" class="space-y-3 max-h-96 overflow-y-auto pr-1">
-                    <!-- Dinâmico JS -->
-                </div>
+                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Mural dos Últimos Sorteios</h3>
+                <div id="hist-sorteios-container" class="space-y-3 max-h-96 overflow-y-auto pr-1"></div>
             </div>
         </div>
     </section>
@@ -611,40 +677,53 @@
     <!-- SEÇÃO 7: DASHBOARD ADMIN -->
     <section id="sec-admin-dash" class="hidden space-y-6">
         <div class="flex justify-between items-center border-b pb-2">
-            <h2 class="text-2xl font-bold text-gray-800">Painel de Controle do Administrador</h2>
+            <h2 class="text-2xl font-bold text-gray-800">Painel Administrativo</h2>
             <button onclick="goToLogin()" class="text-red-500 font-bold hover:underline">Sair do Admin</button>
         </div>
 
-        <!-- MÓDULO 1: GERAR JOGOS DA SEMANA -->
-        <div class="bg-blue-50 border border-blue-200 p-4 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div>
-                <h3 class="font-bold text-blue-900 text-sm uppercase tracking-wider">1. Fechamento e Processamento Semanal</h3>
-                <p class="text-xs text-blue-800 mt-0.5">Dispare esse gatilho para coletar as dezenas ativas de todos os cadastrados, gerar as surpresinhas e debitar 1 crédito do saldo de cada um.</p>
+        <!-- ADIÇÃO: CONFIGURAÇÃO CHAVE PIX NO ADMIN -->
+        <div class="bg-white border p-4 rounded-xl shadow-sm space-y-2">
+            <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Configuração de Cobrança</h3>
+            <div class="flex flex-col md:flex-row gap-2">
+                <input type="text" id="adm-pix-key" placeholder="Insira a Chave PIX do seu Bolão" class="p-2 text-sm border rounded w-full focus:outline-none focus:ring-1 focus:ring-black">
+                <button onclick="salvarPixKeyAdmin()" class="bg-black text-white text-sm px-5 py-2 rounded font-bold hover:bg-gray-800 transition">Salvar Chave PIX</button>
             </div>
-            <button onclick="fazerApostaGeral()" class="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold shadow-md hover:bg-blue-700 whitespace-nowrap text-sm">Gerar Rodada Semanal</button>
         </div>
 
-        <!-- MÓDULO 2: CONFERÊNCIA AUTOMÁTICA E APURAÇÃO DE PRÊMIOS -->
-        <div class="bg-amber-50 border border-amber-200 p-4 rounded-xl space-y-3">
-            <h3 class="font-bold text-amber-900 text-sm uppercase tracking-wider">2. Apuração do Resultado e Rateio Proporcional</h3>
-            <div class="grid md:grid-cols-3 gap-3">
+        <div class="bg-blue-50 border border-blue-200 p-4 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+                <h3 class="font-bold text-blue-900 text-sm uppercase tracking-wider">1. Processamento Semanal</h3>
+                <p class="text-xs text-blue-800 mt-0.5">Gera as surpresinhas e debita créditos ativos.</p>
+            </div>
+            <button onclick="fazerApostaGeral()" class="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold shadow-md hover:bg-blue-700 text-sm">Gerar Rodada Semanal</button>
+        </div>
+
+        <!-- REESTRUTURAÇÃO: APURAÇÃO EM DUAS ETAPAS SOLICITADA -->
+        <div class="bg-amber-50 border border-amber-200 p-4 rounded-xl space-y-4">
+            <h3 class="font-bold text-amber-900 text-sm uppercase tracking-wider">2. Apuração por Etapas e Conferência</h3>
+            
+            <!-- ETAPA 1: SELECIONAR E CONFERIR JOGOS -->
+            <div class="grid md:grid-cols-2 gap-3 border-b border-amber-200 pb-4">
                 <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-0.5">Selecione a Rodada:</label>
-                    <select id="adm-concurso-id" class="w-full p-1.5 text-sm border bg-white rounded focus:outline-none">
-                        <!-- Preenchido via JS -->
-                    </select>
+                    <label class="block text-xs font-semibold text-gray-600 mb-0.5">Selecione a Rodada Gerada:</label>
+                    <select id="adm-concurso-id" class="w-full p-2 text-sm border bg-white rounded focus:outline-none"></select>
                 </div>
                 <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-0.5">6 Números Sorteados (separados por vírgula):</label>
-                    <input type="text" id="adm-dezenas-sorteadas" placeholder="Ex: 05,14,23,32,48,57" class="w-full p-1.5 text-sm border rounded font-mono uppercase focus:outline-none">
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-0.5">Valor do Prêmio Recebido (R$):</label>
-                    <input type="number" id="adm-premio-total" placeholder="0.00" class="w-full p-1.5 text-sm border rounded focus:outline-none">
+                    <label class="block text-xs font-semibold text-gray-600 mb-0.5">6 Números Sorteados Oficiais:</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="adm-dezenas-sorteadas" placeholder="Ex: 05,14,23,32,48,57" class="w-full p-2 text-sm border rounded font-mono focus:outline-none">
+                        <button onclick="executarEtapa1Conferencia()" class="bg-amber-700 text-white text-xs px-4 py-2 rounded font-bold hover:bg-amber-800 shrink-0 shadow">1. Verificar Acertos</button>
+                    </div>
                 </div>
             </div>
-            <div class="text-right pt-1">
-                <button onclick="enviarApuracaoSorteio()" class="bg-amber-600 text-white px-4 py-2 rounded-lg font-bold text-sm shadow hover:bg-amber-700 transition">Conferir e Ratear Prêmios</button>
+
+            <!-- ETAPA 2: HABILITADA APENAS APÓS CONFERÊNCIA DA ETAPA 1 -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-gray-600 mb-0.5">Valor do Prêmio Total Conquistado pelo Grupo (R$):</label>
+                <div class="flex flex-col md:flex-row gap-3">
+                    <input type="number" id="adm-premio-total" placeholder="Informe o prêmio apenas após validar acertos" disabled class="p-2 text-sm border rounded w-full bg-gray-100 disabled:opacity-60 disabled:cursor-not-allowed font-medium focus:outline-none">
+                    <button id="btn-etapa2-rateio" onclick="executarEtapa2Rateio()" disabled class="bg-gray-400 text-white text-sm px-6 py-2 rounded-lg font-bold cursor-not-allowed shadow transition whitespace-nowrap">2. Ratear e Finalizar Rodada</button>
+                </div>
             </div>
         </div>
 
@@ -662,13 +741,38 @@
                             <th class="p-3 text-center">Ações</th>
                         </tr>
                     </thead>
-                    <tbody id="admin-table-body" class="divide-y divide-gray-100">
-                        <!-- Injetado via Javascript -->
-                    </tbody>
+                    <tbody id="admin-table-body" class="divide-y divide-gray-100"></tbody>
                 </table>
             </div>
         </div>
     </section>
+</div>
+
+<!-- ADIÇÃO: TELA MODAL DE EXIBIÇÃO DE VALORES E PARTICIPANTES APÓS RATEIO -->
+<div id="modal-rateio-container" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4 max-h-[85vh] flex flex-col justify-between">
+        <div>
+            <div class="flex items-center justify-between border-b pb-2 mb-3">
+                <h3 class="text-xl font-bold text-green-700">🏆 Resumo do Rateio</h3>
+                <span class="text-xs bg-green-100 text-green-800 font-bold px-2 py-0.5 rounded-full">Sucesso</span>
+            </div>
+            <div class="grid grid-cols-2 gap-2 bg-gray-50 p-3 rounded-lg border text-sm mb-4">
+                <div>
+                    <span class="text-xs text-gray-500 block">Prêmio Total do Grupo:</span>
+                    <strong id="modal-total-premio" class="text-base text-gray-800">R$ 0,00</strong>
+                </div>
+                <div>
+                    <span class="text-xs text-gray-500 block">Participantes com Cota:</span>
+                    <strong id="modal-total-participantes" class="text-base text-gray-800">0</strong>
+                </div>
+            </div>
+            <p class="text-xs font-bold text-gray-600 uppercase tracking-wider mb-1">Demonstrativo de Repasse por Membro:</p>
+            <div id="modal-lista-rateio" class="divide-y overflow-y-auto max-h-56 pr-1 border rounded-lg p-2 bg-white">
+                <!-- Populado dinamicamente via JS -->
+            </div>
+        </div>
+        <button onclick="fecharModalRateio()" class="w-full bg-gray-800 text-white font-bold py-2.5 rounded-lg shadow hover:bg-gray-900 transition text-sm">Fechar Relatório</button>
+    </div>
 </div>
 
 </body>
