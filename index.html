@@ -25,6 +25,7 @@
 
     let currentData = {}; 
     let adminToken = "";
+    let userSession = {}; // Guarda os dados do usuário logado no momento
 
     async function apiCall(action, payload = {}) {
         document.getElementById('loading').classList.remove('hidden');
@@ -63,15 +64,27 @@
         
         const res = await apiCall("login", { celular: cel, dataNascimento: dt });
         if(res.success) {
-            document.getElementById('dash-nome').innerText = res.user.nome;
-            document.getElementById('dash-plano').innerText = res.user.plano;
-            document.getElementById('dash-tipo').innerText = res.user.tipoAposta;
-            document.getElementById('dash-apostas').innerText = res.user.apostasRestantes;
-            document.getElementById('dash-jogos').innerText = res.user.jogos || "Nenhum";
+            userSession = res.user;
+            atualizarInterfaceDashboard();
+            await carregarHistoricosPainel();
             showSection('sec-dashboard');
         } else {
             alert(res.message);
         }
+    }
+
+    function atualizarInterfaceDashboard() {
+        document.getElementById('dash-nome').innerText = userSession.nome;
+        document.getElementById('dash-plano').innerText = userSession.plano;
+        document.getElementById('dash-tipo').innerText = userSession.tipoAposta;
+        document.getElementById('dash-apostas').innerText = userSession.apostasRestantes;
+        document.getElementById('dash-jogos').innerText = userSession.jogos || "Nenhum cadastrado";
+        document.getElementById('dash-futuro').innerText = userSession.proximoPlano || "Nenhuma alteração agendada";
+        
+        // Seta os valores padrão nos campos de edição interna
+        document.getElementById('dash-edit-tipo').value = userSession.tipoAposta;
+        document.getElementById('dash-next-plano').value = userSession.proximoPlano || "";
+        toggleEditNumerosSorte();
     }
 
     // REGISTRO - ETAPA 1
@@ -107,32 +120,42 @@
         }
     }
 
-    // LÓGICA DE VALIDAÇÃO E FILTRO DOS 6 MINI CAMPOS
+    // CONTROLE DE EDICAO DE NUMEROS NO DASHBOARD
+    function toggleEditNumerosSorte() {
+        const tipo = document.getElementById('dash-edit-tipo').value;
+        const container = document.getElementById('dash-numeros-sorte-container');
+        if(tipo === "Número da sorte") {
+            container.classList.remove('hidden');
+            if(userSession.plano === "Dobrado") {
+                document.getElementById('dash-jogo2-container').classList.remove('hidden');
+            } else {
+                document.getElementById('dash-jogo2-container').classList.add('hidden');
+            }
+        } else {
+            container.classList.add('hidden');
+        }
+    }
+
+    // AUXILIAR: VALIDAÇÃO DOS QUADRADOS DE DEZENAS
     function capturarEValidarJogos(className, identificadorJogo) {
         const inputs = document.querySelectorAll(className);
         let numeros = [];
 
         for (let input of inputs) {
             let valor = parseInt(input.value, 10);
-
             if (isNaN(valor) || valor < 1 || valor > 60) {
                 alert(`Preencha todos os 6 campos do ${identificadorJogo} com números de 01 a 60.`);
                 input.focus();
                 return null;
             }
-
-            // Formata adicionando zero à esquerda se for menor que 10 (ex: "05")
             let formatado = valor < 10 ? "0" + valor : "" + valor;
-
             if (numeros.includes(formatado)) {
-                alert(`Número repetido (${formatado}) detectado no ${identificadorJogo}. Escolha 6 números diferentes!`);
+                alert(`Número repetido (${formatado}) detectado no ${identificadorJogo}. Escolha números diferentes!`);
                 input.focus();
                 return null;
             }
             numeros.push(formatado);
         }
-
-        // Ordena do menor para o maior para manter a planilha limpa e legível
         numeros.sort((a, b) => parseInt(a) - parseInt(b));
         return numeros.join(",");
     }
@@ -143,7 +166,7 @@
 
         if(currentData.tipoAposta === "Número da sorte") {
             const jogo1Str = capturarEValidarJogos('.j1-num', 'Jogo 1');
-            if(!jogo1Str) return; // Interrompe se a validação falhar
+            if(!jogo1Str) return; 
             currentData.jogosCadastrados = jogo1Str;
 
             if(currentData.plano === "Dobrado") {
@@ -168,7 +191,127 @@
         await doLogin();
     }
 
-    // ADMIN
+    // ============================================
+    // NOVAS FUNÇÕES DO PARTICIPANTE (DASHBOARD)
+    // ============================================
+    
+    async function dispararAvisoPagamento() {
+        if(confirm("Deseja notificar o administrador que você realizou um novo pagamento via PIX?")) {
+            const res = await apiCall("notifyPaymentIntent", { celular: userSession.celular, nome: userSession.nome });
+            alert(res.message);
+        }
+    }
+
+    async function salvarAlteracaoJogos() {
+        const tipoAposta = document.getElementById('dash-edit-tipo').value;
+        let jogosCadastrados = "";
+
+        if(tipoAposta === "Número da sorte") {
+            const j1 = capturarEValidarJogos('.edit-j1-num', 'Jogo 1');
+            if(!j1) return;
+            jogosCadastrados = j1;
+
+            if(userSession.plano === "Dobrado") {
+                const j2 = capturarEValidarJogos('.edit-j2-num', 'Jogo 2');
+                if(!j2) return;
+                jogosCadastrados += " | " + j2;
+            }
+        }
+
+        const res = await apiCall("updateLuckyNumbers", {
+            celular: userSession.celular,
+            tipoAposta: tipoAposta,
+            jogosCadastrados: jogosCadastrados
+        });
+
+        if(res.success) {
+            alert(res.message);
+            userSession.tipoAposta = tipoAposta;
+            userSession.jogos = jogosCadastrados;
+            atualizarInterfaceDashboard();
+        }
+    }
+
+    async function salvarAgendamentoPlano() {
+        const proximoPlano = document.getElementById('dash-next-plano').value;
+        const res = await apiCall("updateNextPlan", { celular: userSession.celular, proximoPlano: proximoPlano });
+        if(res.success) {
+            alert(res.message);
+            userSession.proximoPlano = proximoPlano;
+            atualizarInterfaceDashboard();
+        }
+    }
+
+    async function carregarHistoricosPainel() {
+        const res = await apiCall("getParticipantHistory", { celular: userSession.celular });
+        if(res.success) {
+            // Renderiza Histórico de Pagamentos (Últimos 4)
+            const areaPagamentos = document.getElementById('hist-pagamentos-list');
+            areaPagamentos.innerHTML = "";
+            if(res.pagamentos.length === 0) {
+                areaPagamentos.innerHTML = `<p class="text-sm text-gray-500">Nenhum pagamento registrado recentemente.</p>`;
+            } else {
+                res.pagamentos.forEach(p => {
+                    areaPagamentos.innerHTML += `
+                        <div class="flex justify-between items-center bg-gray-50 p-2 rounded text-sm border-l-4 border-green-500">
+                            <span>Data: <strong>${p.data}</strong></span>
+                            <span class="bg-green-100 text-green-800 font-bold px-2 py-0.5 rounded">+${p.creditos} Créditos</span>
+                        </div>
+                    `;
+                });
+            }
+
+            // Renderiza Últimos 10 Sorteios e Jogos do Grupo
+            const areaSorteios = document.getElementById('hist-sorteios-container');
+            areaSorteios.innerHTML = "";
+            if(res.sorteios.length === 0) {
+                areaSorteios.innerHTML = `<p class="text-sm text-gray-500 text-center py-4">Nenhum sorteio registrado no sistema até o momento.</p>`;
+            } else {
+                res.sorteios.forEach(s => {
+                    // Busca as apostas vinculadas a esse sorteio específico
+                    const apostasDaRodada = res.apostasDetalhe[s.idSorteio] || [];
+                    let apostasHtml = "";
+
+                    apostasDaRodada.forEach(ap => {
+                        const ehDono = (ap.celular == userSession.celular) ? "bg-yellow-50 font-semibold border border-yellow-300" : "";
+                        apostasHtml += `
+                            <div class="p-2 text-xs border-b last:border-0 ${ehDono}">
+                                <div class="flex justify-between">
+                                    <span class="text-gray-700 font-medium">${ap.nome} (${ap.plano})</span>
+                                    <span class="text-blue-600 font-bold">${ap.acertos}</span>
+                                </div>
+                                <div class="text-gray-500 font-mono mt-0.5">${ap.jogos}</div>
+                                ${ap.premio > 0 ? `<div class="text-green-600 font-bold mt-0.5">🏆 Prêmio Recebido: R$ ${Number(ap.premio).toFixed(2)}</div>` : ''}
+                            </div>
+                        `;
+                    });
+
+                    areaSorteios.innerHTML += `
+                        <div class="border rounded-lg bg-white overflow-hidden shadow-sm">
+                            <div class="bg-gray-800 text-white p-3 flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+                                <div>
+                                    <span class="text-xs bg-blue-600 px-2 py-0.5 rounded font-bold uppercase tracking-wider">${s.idSorteio}</span>
+                                    <div class="text-sm mt-1">Sorteados: <strong class="text-green-400 font-mono text-base tracking-wide">${s.sorteados}</strong></div>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-xs text-gray-300">Prêmio Total: R$ ${Number(s.premioTotal).toFixed(2)}</div>
+                                    <div class="text-xs text-green-300 font-bold">Por Cota: R$ ${Number(s.rateioCota).toFixed(2)}</div>
+                                </div>
+                            </div>
+                            <div class="p-2 bg-gray-50 font-bold text-xs text-gray-600 border-b">Apostas Realizadas pelo Grupo nesta Rodada:</div>
+                            <div class="max-h-40 overflow-y-auto divide-y bg-white">
+                                ${apostasHtml || '<p class="p-3 text-xs text-gray-400">Nenhum log de jogo salvo para esta rodada.</p>'}
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+        }
+    }
+
+    // ============================================
+    // ADMIN FUNCTIONS
+    // ============================================
     async function doAdminLogin() {
         const user = document.getElementById('admin-user').value;
         const pass = document.getElementById('admin-pass').value;
@@ -184,25 +327,36 @@
     async function loadAdminData() {
         const res = await apiCall("getAdminData", { token: adminToken });
         if(res.success) {
+            // Tabela de Participantes
             const tbody = document.getElementById('admin-table-body');
             tbody.innerHTML = "";
             res.participantes.forEach(p => {
                 tbody.innerHTML += `
                     <tr class="border-b">
-                        <td class="p-2">${p.nome}</td>
-                        <td class="p-2">${p.plano}</td>
-                        <td class="p-2">${p.tipoAposta === "Aleatório" ? "Aleatório" : p.jogos}</td>
-                        <td class="p-2 font-bold ${p.apostasRestantes > 0 ? 'text-green-600' : 'text-red-600'}">${p.apostasRestantes}</td>
-                        <td class="p-2"><button onclick="registrarPagamento('${p.celular}')" class="bg-green-500 text-white px-2 py-1 rounded text-sm">Validar Pagamento</button></td>
+                        <td class="p-2 text-sm">${p.nome}</td>
+                        <td class="p-2 text-sm">${p.plano}</td>
+                        <td class="p-2 text-xs font-mono max-w-xs truncate">${p.tipoAposta === "Aleatório" ? "🎲 Aleatório" : p.jogos}</td>
+                        <td class="p-2 text-sm font-bold ${p.apostasRestantes > 0 ? 'text-green-600' : 'text-red-600'}">${p.apostasRestantes} cota(s)</td>
+                        <td class="p-2"><button onclick="registrarPagamento('${p.celular}')" class="bg-green-500 text-white px-2 py-1 rounded text-xs font-bold hover:bg-green-600">Validar +4 Crét.</button></td>
                     </tr>
                 `;
             });
+
+            // Popula Dropdown de Apuração de Rodadas Abertas
+            const selectRodada = document.getElementById('adm-concurso-id');
+            selectRodada.innerHTML = `<option value="">-- Selecione a Rodada Gerada --</option>`;
+            if(res.rodadasAbertas && res.rodadasAbertas.length > 0) {
+                res.rodadasAbertas.forEach(r => {
+                    selectRodada.innerHTML += `<option value="${r}">${r}</option>`;
+                });
+            }
+
             showSection('sec-admin-dash');
         }
     }
 
     async function registrarPagamento(celular) {
-        if(confirm("Confirmar pagamento e liberar 4 apostas?")) {
+        if(confirm("Confirmar a validação do pagamento deste usuário? Isso adicionará +4 créditos de forma acumulativa ao saldo atual dele.")) {
             const res = await apiCall("registerPayment", { token: adminToken, celular });
             alert(res.message);
             loadAdminData();
@@ -210,26 +364,48 @@
     }
 
     async function fazerApostaGeral() {
-        if(confirm("Deseja gerar os jogos para todos os usuários ativos? (Isso consumirá 1 aposta de cada)")) {
+        if(confirm("Deseja gerar e consolidar a rodada de jogos de todos os usuários com créditos ativos? (Isso consumirá 1 crédito de cada participante e abrirá um ID de rodada para apuração posterior)")) {
             const res = await apiCall("fazerAposta", { token: adminToken });
             alert(res.message);
             loadAdminData();
         }
     }
+
+    async function enviarApuracaoSorteio() {
+        const idSorteio = document.getElementById('adm-concurso-id').value;
+        const dezenas = document.getElementById('adm-dezenas-sorteadas').value;
+        const premioTotal = document.getElementById('adm-premio-total').value;
+
+        if(!idSorteio || !dezenas) return alert("Selecione a rodada e digite as dezenas sorteadas!");
+
+        if(confirm(`Confirmar o processamento do sorteio para a rodada ${idSorteio}? O sistema conferirá os acertos e distribuirá o prêmio proporcionalmente.`)) {
+            const res = await apiCall("informarSorteioAdmin", {
+                token: adminToken,
+                idSorteio: idSorteio,
+                numerosSorteados: dezenas,
+                premioTotal: premioTotal || 0
+            });
+            alert(res.message);
+            // Limpa formulário e recarrega painel admin
+            document.getElementById('adm-dezenas-sorteadas').value = "";
+            document.getElementById('adm-premio-total').value = "";
+            loadAdminData();
+        }
+    }
 </script>
 
-<div class="max-w-3xl mx-auto bg-white p-6 rounded-lg shadow-md mt-10">
+<div class="max-w-3xl mx-auto bg-white p-4 md:p-6 rounded-lg shadow-md mt-4">
     <h1 class="text-3xl font-bold text-center text-green-700 mb-6">Bolão Mega Sena</h1>
 
-    <div id="loading" class="hidden text-center text-blue-600 font-bold mb-4">Processando, aguarde...</div>
+    <div id="loading" class="hidden text-center text-blue-600 font-bold mb-4 animate-pulse">⚙️ Processando comando no servidor, aguarde...</div>
 
     <!-- SEÇÃO 1: LOGIN -->
     <section id="sec-login">
         <h2 class="text-xl font-semibold mb-4 text-center">Acessar Área do Participante</h2>
         <div class="space-y-4">
-            <input type="text" id="login-celular" placeholder="Número do Celular (com DDD)" class="w-full p-2 border rounded">
-            <input type="date" id="login-data" class="w-full p-2 border rounded">
-            <button onclick="doLogin()" class="w-full bg-green-600 text-white p-3 rounded font-bold hover:bg-green-700">Entrar</button>
+            <input type="text" id="login-celular" placeholder="Número do Celular (com DDD)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500 focus:outline-none">
+            <input type="date" id="login-data" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500 focus:outline-none">
+            <button onclick="doLogin()" class="w-full bg-green-600 text-white p-3 rounded font-bold hover:bg-green-700 transition">Entrar no Painel</button>
         </div>
         <div class="mt-6 text-center space-y-2">
             <p>Não tem cadastro? <button onclick="goToRegister()" class="text-blue-600 underline font-semibold">Cadastre-se aqui</button></p>
@@ -241,96 +417,186 @@
     <section id="sec-register-1" class="hidden">
         <h2 class="text-xl font-semibold mb-2">Novo Cadastro</h2>
         <div class="bg-yellow-100 text-yellow-800 p-3 rounded mb-4 text-sm">
-            <strong>Atenção:</strong> Informe um número que seja do WhatsApp. Este número será adicionado ao nosso grupo oficial para acompanhamento do bolão!
+            <strong>Atenção:</strong> Informe um número que seja do WhatsApp válido. Ele será monitorado para envios e atualizações das rodadas.
         </div>
         <div class="space-y-4">
             <input type="text" id="reg-nome" placeholder="Nome Completo" class="w-full p-2 border rounded">
             <input type="text" id="reg-celular" placeholder="Celular WhatsApp (com DDD)" class="w-full p-2 border rounded">
             <input type="date" id="reg-data" class="w-full p-2 border rounded">
-            <div class="flex justify-between">
-                <button onclick="goToLogin()" class="text-gray-600">Voltar</button>
-                <button onclick="nextRegisterStep()" class="bg-blue-600 text-white px-6 py-2 rounded">Avançar</button>
+            <div class="flex justify-between items-center pt-2">
+                <button onclick="goToLogin()" class="text-gray-600 hover:underline">Voltar</button>
+                <button onclick="nextRegisterStep()" class="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700">Avançar</button>
             </div>
         </div>
     </section>
 
     <!-- SEÇÃO 3: REGISTRO (PLANO) -->
     <section id="sec-register-2" class="hidden">
-        <h2 class="text-xl font-semibold mb-4">Escolha seu Plano</h2>
+        <h2 class="text-xl font-semibold mb-4">Escolha seu Plano Inicial</h2>
         <div class="grid md:grid-cols-2 gap-4">
-            <div class="border rounded-lg p-5 cursor-pointer hover:border-blue-500 hover:shadow-lg transition bg-white flex flex-col" onclick="selectPlan('Padrão')">
+            <div class="border-2 rounded-lg p-5 cursor-pointer hover:border-blue-500 hover:shadow-lg transition bg-white flex flex-col" onclick="selectPlan('Padrão')">
                 <h3 class="text-2xl font-bold text-gray-800">Padrão</h3>
                 <p class="text-blue-600 font-bold text-xl mb-3">R$ 28,00 /mês</p>
-                <p class="text-gray-600 mb-4">Toda quinta-feira* uma aposta, durante 4 semanas.</p>
-                <div class="mt-auto bg-gray-50 p-3 rounded text-sm text-gray-700">
-                    Se o bolão for premiado, você recebe a cota padrão proporcional.
+                <p class="text-gray-600 mb-4 text-sm">Toda semana uma aposta correndo em seu nome, durante 4 semanas seguidas.</p>
+                <div class="mt-auto bg-gray-50 p-3 rounded text-xs text-gray-700">
+                    Garante direito a 1 cota de premiação proporcional por rodada ativa.
                 </div>
             </div>
-            <div class="border rounded-lg p-5 cursor-pointer hover:border-purple-500 hover:shadow-lg transition bg-white border-purple-200 flex flex-col" onclick="selectPlan('Dobrado')">
+            <div class="border-2 rounded-lg p-5 cursor-pointer hover:border-purple-500 hover:shadow-lg transition bg-white border-purple-100 flex flex-col" onclick="selectPlan('Dobrado')">
                 <h3 class="text-2xl font-bold text-purple-700">Dobrado</h3>
                 <p class="text-purple-600 font-bold text-xl mb-3">R$ 54,00 /mês</p>
-                <p class="text-gray-600 mb-4">Toda quinta-feira* duas apostas, durante 4 semanas.</p>
-                <div class="mt-auto bg-purple-50 p-3 rounded text-sm text-gray-700">
-                    <strong>Vantagem:</strong> Se o bolão for premiado, você recebe o <strong>dobro do valor</strong> dos participantes do plano Padrão!
+                <p class="text-gray-600 mb-4 text-sm">Toda semana duas apostas correndo em seu nome, durante 4 semanas seguidas.</p>
+                <div class="mt-auto bg-purple-50 p-3 rounded text-xs text-gray-700">
+                    <strong>Vantagem:</strong> Recebe o <strong>dobro do valor</strong> de rateio de prêmios comparado ao plano Padrão!
                 </div>
             </div>
         </div>
-        <button onclick="showSection('sec-register-1')" class="mt-6 text-gray-600">Voltar</button>
+        <button onclick="showSection('sec-register-1')" class="mt-6 text-gray-600 hover:underline">← Voltar para dados básicos</button>
     </section>
 
     <!-- SEÇÃO 4: REGISTRO (TIPO DE APOSTA) -->
     <section id="sec-register-3" class="hidden">
         <h2 class="text-xl font-semibold mb-4">Como deseja gerar seus jogos?</h2>
-        <select id="reg-tipo" class="w-full p-2 border rounded mb-6" onchange="toggleNumerosSorte()">
-            <option value="Aleatório">Aleatório (O sistema gera para você a cada sorteio)</option>
-            <option value="Número da sorte">Número da Sorte (Sempre os mesmos números)</option>
+        <select id="reg-tipo" class="w-full p-2 border rounded mb-6 focus:outline-none focus:ring-2 focus:ring-green-500" onchange="toggleNumerosSorte()">
+            <option value="Aleatório">Aleatório (O sistema gera de surpresinha automática a cada sorteio)</option>
+            <option value="Número da sorte">Número da Sorte (Eu quero escolher minhas dezenas fixas)</option>
         </select>
 
-        <!-- NOVO CONTAINER COM OS 6 MINI CAMPOS -->
         <div id="numeros-sorte-container" class="hidden bg-gray-50 p-4 border rounded mb-6">
             <p class="text-sm text-gray-600 mb-4 text-center">Insira 6 números de <strong>01 a 60</strong> por jogo:</p>
             
             <div class="mb-6">
-                <label class="block font-bold mb-2 text-sm text-gray-700">Números do Jogo 1</label>
+                <label class="block font-bold mb-2 text-sm text-gray-700">Dezenas do Jogo 1</label>
                 <div class="flex gap-2 justify-center">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-lg focus:border-green-500 focus:outline-none bg-white j1-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-lg focus:border-green-500 focus:outline-none bg-white j1-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-lg focus:border-green-500 focus:outline-none bg-white j1-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-lg focus:border-green-500 focus:outline-none bg-white j1-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-lg focus:border-green-500 focus:outline-none bg-white j1-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-lg focus:border-green-500 focus:outline-none bg-white j1-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-base focus:border-green-500 focus:outline-none bg-white j1-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-base focus:border-green-500 focus:outline-none bg-white j1-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-base focus:border-green-500 focus:outline-none bg-white j1-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-base focus:border-green-500 focus:outline-none bg-white j1-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-base focus:border-green-500 focus:outline-none bg-white j1-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-base focus:border-green-500 focus:outline-none bg-white j1-num">
                 </div>
             </div>
 
             <div id="jogo2-container" class="hidden mb-4">
-                <label class="block font-bold mb-2 text-sm text-purple-700">Números do Jogo 2 (Plano Dobrado)</label>
+                <label class="block font-bold mb-2 text-sm text-purple-700">Dezenas do Jogo 2 (Plano Dobrado)</label>
                 <div class="flex gap-2 justify-center">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-lg focus:border-purple-500 focus:outline-none bg-white j2-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-lg focus:border-purple-500 focus:outline-none bg-white j2-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-lg focus:border-purple-500 focus:outline-none bg-white j2-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-lg focus:border-purple-500 focus:outline-none bg-white j2-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-lg focus:border-purple-500 focus:outline-none bg-white j2-num">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-lg focus:border-purple-500 focus:outline-none bg-white j2-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-base focus:border-purple-500 focus:outline-none bg-white j2-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-base focus:border-purple-500 focus:outline-none bg-white j2-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-base focus:border-purple-500 focus:outline-none bg-white j2-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-base focus:border-purple-500 focus:outline-none bg-white j2-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-base focus:border-purple-500 focus:outline-none bg-white j2-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 md:w-12 md:h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-base focus:border-purple-500 focus:outline-none bg-white j2-num">
                 </div>
             </div>
         </div>
 
         <div class="flex justify-between">
-            <button onclick="showSection('sec-register-2')" class="text-gray-600">Voltar</button>
-            <button onclick="finishRegister()" class="bg-green-600 text-white px-6 py-2 rounded">Finalizar Cadastro</button>
+            <button onclick="showSection('sec-register-2')" class="text-gray-600 hover:underline">Voltar</button>
+            <button onclick="finishRegister()" class="bg-green-600 text-white px-6 py-2 rounded font-bold hover:bg-green-700">Finalizar Cadastro</button>
         </div>
     </section>
 
     <!-- SEÇÃO 5: DASHBOARD PARTICIPANTE -->
     <section id="sec-dashboard" class="hidden">
-        <h2 class="text-2xl font-bold mb-4">Olá, <span id="dash-nome"></span>!</h2>
-        <div class="bg-white border rounded p-4 mb-4 shadow-sm">
-            <p><strong>Seu Plano:</strong> <span id="dash-plano"></span></p>
-            <p><strong>Tipo de Aposta:</strong> <span id="dash-tipo"></span></p>
-            <p><strong>Apostas Restantes (semanas pagas):</strong> <span id="dash-apostas" class="font-bold text-blue-600 text-lg"></span></p>
-            <p class="mt-2"><strong>Seus Jogos (se fixo):</strong> <span id="dash-jogos" class="text-gray-600"></span></p>
+        <div class="flex justify-between items-center mb-4 border-b pb-2">
+            <h2 class="text-2xl font-bold">Olá, <span id="dash-nome" class="text-green-700"></span>!</h2>
+            <button onclick="goToLogin()" class="bg-gray-200 text-gray-700 px-3 py-1 text-sm rounded hover:bg-gray-300 font-medium">Sair da Conta</button>
         </div>
-        <button onclick="goToLogin()" class="bg-gray-200 text-gray-800 px-4 py-2 rounded w-full">Sair</button>
+
+        <!-- GRID PRINCIPAL DE CONFIGURAÇÃO -->
+        <div class="grid md:grid-cols-3 gap-4 mb-6">
+            <!-- STATUS ATUAL -->
+            <div class="bg-white border rounded-xl p-4 shadow-sm md:col-span-2 space-y-1.5">
+                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider border-b pb-1 mb-2">Seu Plano Vigente</h3>
+                <p class="text-sm"><strong>Plano Atual:</strong> <span id="dash-plano" class="font-medium"></span></p>
+                <p class="text-sm"><strong>Tipo de Processamento:</strong> <span id="dash-tipo" class="font-medium"></span></p>
+                <p class="text-sm"><strong>Créditos Restantes (Rodadas Pagas):</strong> <span id="dash-apostas" class="font-bold text-blue-600 text-base"></span></p>
+                <p class="text-sm truncate"><strong>Seus Números Cadastrados:</strong> <br><span id="dash-jogos" class="font-mono text-xs text-gray-600 bg-gray-50 p-1 rounded block mt-1 overflow-x-auto whitespace-nowrap"></span></p>
+                <p class="text-xs text-purple-700 pt-1"><strong>Agendado p/ Próximo Ciclo:</strong> <span id="dash-futuro" class="font-bold"></span></p>
+            </div>
+
+            <!-- BOTÃO INFORMAR PAGAMENTO MÚLTIPLO -->
+            <div class="bg-gradient-to-br from-green-50 to-emerald-100 border border-green-200 rounded-xl p-4 flex flex-col justify-between shadow-sm">
+                <div>
+                    <h4 class="font-bold text-green-900 text-sm uppercase tracking-wider">Renovação / Créditos</h4>
+                    <p class="text-xs text-green-800 mt-1">Fez um novo PIX? Avise o administrador para somar mais +4 rodadas na sua conta de forma acumulativa.</p>
+                </div>
+                <button onclick="dispararAvisoPagamento()" class="w-full bg-green-600 text-white font-bold text-sm py-2 px-3 rounded-lg shadow hover:bg-green-700 transition mt-3">👉 Informar Pagamento</button>
+            </div>
+        </div>
+
+        <!-- ABAS DE EDIÇÃO DINÂMICA -->
+        <div class="grid md:grid-cols-2 gap-4 mb-6">
+            <!-- GERENCIAR NÚMEROS DA SORTE -->
+            <div class="bg-gray-50 p-4 border rounded-xl shadow-sm">
+                <h3 class="font-bold text-gray-800 text-sm mb-2">Alterar Meus Números da Sorte</h3>
+                <label class="block text-xs text-gray-500 mb-1">Mudar Modo de Jogo:</label>
+                <select id="dash-edit-tipo" class="w-full p-2 text-sm border rounded mb-3 bg-white" onchange="toggleEditNumerosSorte()">
+                    <option value="Aleatório">Aleatório (Surpresinha Semanal)</option>
+                    <option value="Número da sorte">Número da Sorte (Fixo Escolhido)</option>
+                </select>
+
+                <div id="dash-numeros-sorte-container" class="hidden space-y-3 pt-1 border-t">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-600 mb-1">Jogo 1 (6 Dezenas):</label>
+                        <div class="flex gap-1 justify-start">
+                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j1-num bg-white">
+                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j1-num bg-white">
+                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j1-num bg-white">
+                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j1-num bg-white">
+                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j1-num bg-white">
+                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j1-num bg-white">
+                        </div>
+                    </div>
+                    <div id="dash-jogo2-container" class="hidden">
+                        <label class="block text-xs font-bold text-purple-700 mb-1">Jogo 2 (Exclusivo Dobrado):</label>
+                        <div class="flex gap-1 justify-start">
+                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j2-num bg-white">
+                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j2-num bg-white">
+                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j2-num bg-white">
+                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j2-num bg-white">
+                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j2-num bg-white">
+                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j2-num bg-white">
+                        </div>
+                    </div>
+                </div>
+                <button onclick="salvarAlteracaoJogos()" class="mt-3 w-full bg-blue-600 text-white text-xs font-bold py-1.5 rounded hover:bg-blue-700">Salvar Mudança de Jogo</button>
+            </div>
+
+            <!-- ALTERAÇÃO DE PLANO FUTURO -->
+            <div class="bg-gray-50 p-4 border rounded-xl shadow-sm flex flex-col justify-between">
+                <div>
+                    <h3 class="font-bold text-gray-800 text-sm mb-1">Alterar Plano para o Próximo Ciclo</h3>
+                    <p class="text-xs text-gray-500 mb-3">A transição só entra em vigor automaticamente quando suas apostas restantes atuais chegarem a zero.</p>
+                    <label class="block text-xs text-gray-600 mb-1">Escolher Plano Futuro:</label>
+                    <select id="dash-next-plano" class="w-full p-2 text-sm border rounded bg-white">
+                        <option value="">Manter o mesmo plano atual</option>
+                        <option value="Padrão">Mudar para Plano Padrão (R$ 28,00)</option>
+                        <option value="Dobrado">Mudar para Plano Dobrado (R$ 54,00)</option>
+                    </select>
+                </div>
+                <button onclick="salvarAgendamentoPlano()" class="mt-3 w-full bg-purple-700 text-white text-xs font-bold py-1.5 rounded hover:bg-purple-800">Agendar Alteração de Plano</button>
+            </div>
+        </div>
+
+        <!-- SEÇÃO HISTÓRICOS COMPARTILHADOS -->
+        <div class="grid md:grid-cols-3 gap-4 border-t pt-4">
+            <!-- ÚLTIMOS RECARGAS (LADO ESQUERDO) -->
+            <div class="space-y-2 md:col-span-1">
+                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Últimas Recargas (Max 4)</h3>
+                <div id="hist-pagamentos-list" class="space-y-2">
+                    <!-- Dinâmico JS -->
+                </div>
+            </div>
+
+            <!-- HISTÓRICO DE SORTEIOS E JOGOS DO GRUPO (DIREITA COMPRIDA) -->
+            <div class="space-y-3 md:col-span-2">
+                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Mural dos Últimos 10 Sorteios e Grupos</h3>
+                <div id="hist-sorteios-container" class="space-y-3 max-h-96 overflow-y-auto pr-1">
+                    <!-- Dinâmico JS -->
+                </div>
+            </div>
+        </div>
     </section>
 
     <!-- SEÇÃO 6: LOGIN ADMIN -->
@@ -338,40 +604,69 @@
         <h2 class="text-xl font-bold mb-4 text-center">Administração</h2>
         <input type="text" id="admin-user" placeholder="Usuário" class="w-full p-2 border rounded mb-3">
         <input type="password" id="admin-pass" placeholder="Senha" class="w-full p-2 border rounded mb-4">
-        <button onclick="doAdminLogin()" class="w-full bg-black text-white p-2 rounded">Entrar no Admin</button>
-        <button onclick="goToLogin()" class="w-full mt-2 text-gray-600">Voltar ao site</button>
+        <button onclick="doAdminLogin()" class="w-full bg-black text-white p-2 rounded font-bold">Entrar no Admin</button>
+        <button onclick="goToLogin()" class="w-full mt-2 text-gray-600 text-sm hover:underline">Voltar ao site</button>
     </section>
 
     <!-- SEÇÃO 7: DASHBOARD ADMIN -->
-    <section id="sec-admin-dash" class="hidden">
-        <div class="flex justify-between items-center mb-4">
-            <h2 class="text-2xl font-bold">Painel de Controle</h2>
-            <button onclick="goToLogin()" class="text-red-500 font-bold">Sair</button>
+    <section id="sec-admin-dash" class="hidden space-y-6">
+        <div class="flex justify-between items-center border-b pb-2">
+            <h2 class="text-2xl font-bold text-gray-800">Painel de Controle do Administrador</h2>
+            <button onclick="goToLogin()" class="text-red-500 font-bold hover:underline">Sair do Admin</button>
         </div>
 
-        <div class="bg-blue-100 p-4 rounded mb-6 flex justify-between items-center">
+        <!-- MÓDULO 1: GERAR JOGOS DA SEMANA -->
+        <div class="bg-blue-50 border border-blue-200 p-4 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
-                <h3 class="font-bold text-blue-900">Processamento Semanal</h3>
-                <p class="text-sm text-blue-800">Clique aqui toda quarta-feira às 17h para processar.</p>
+                <h3 class="font-bold text-blue-900 text-sm uppercase tracking-wider">1. Fechamento e Processamento Semanal</h3>
+                <p class="text-xs text-blue-800 mt-0.5">Dispare esse gatilho para coletar as dezenas ativas de todos os cadastrados, gerar as surpresinhas e debitar 1 crédito do saldo de cada um.</p>
             </div>
-            <button onclick="fazerApostaGeral()" class="bg-blue-600 text-white px-4 py-2 rounded font-bold shadow-lg hover:bg-blue-700">Fazer Aposta</button>
+            <button onclick="fazerApostaGeral()" class="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold shadow-md hover:bg-blue-700 whitespace-nowrap text-sm">Gerar Rodada Semanal</button>
         </div>
 
-        <div class="overflow-x-auto">
-            <table class="w-full bg-white border text-left">
-                <thead>
-                    <tr class="bg-gray-200 text-gray-700">
-                        <th class="p-2 border-b">Nome</th>
-                        <th class="p-2 border-b">Plano</th>
-                        <th class="p-2 border-b">Jogos/Tipo</th>
-                        <th class="p-2 border-b">Semanas Pagas</th>
-                        <th class="p-2 border-b">Ação</th>
-                    </tr>
-                </thead>
-                <tbody id="admin-table-body">
-                    <!-- Linhas via JS -->
-                </tbody>
-            </table>
+        <!-- MÓDULO 2: CONFERÊNCIA AUTOMÁTICA E APURAÇÃO DE PRÊMIOS -->
+        <div class="bg-amber-50 border border-amber-200 p-4 rounded-xl space-y-3">
+            <h3 class="font-bold text-amber-900 text-sm uppercase tracking-wider">2. Apuração do Resultado e Rateio Proporcional</h3>
+            <div class="grid md:grid-cols-3 gap-3">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-0.5">Selecione a Rodada:</label>
+                    <select id="adm-concurso-id" class="w-full p-1.5 text-sm border bg-white rounded focus:outline-none">
+                        <!-- Preenchido via JS -->
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-0.5">6 Números Sorteados (separados por vírgula):</label>
+                    <input type="text" id="adm-dezenas-sorteadas" placeholder="Ex: 05,14,23,32,48,57" class="w-full p-1.5 text-sm border rounded font-mono uppercase focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-0.5">Valor do Prêmio Recebido (R$):</label>
+                    <input type="number" id="adm-premio-total" placeholder="0.00" class="w-full p-1.5 text-sm border rounded focus:outline-none">
+                </div>
+            </div>
+            <div class="text-right pt-1">
+                <button onclick="enviarApuracaoSorteio()" class="bg-amber-600 text-white px-4 py-2 rounded-lg font-bold text-sm shadow hover:bg-amber-700 transition">Conferir e Ratear Prêmios</button>
+            </div>
+        </div>
+
+        <!-- LISTA GERAL DE PARTICIPANTES -->
+        <div class="space-y-2">
+            <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Participantes Cadastrados</h3>
+            <div class="overflow-x-auto rounded-xl border border-gray-200">
+                <table class="w-full bg-white text-left border-collapse">
+                    <thead>
+                        <tr class="bg-gray-100 text-gray-700 border-b border-gray-200 text-xs uppercase font-bold">
+                            <th class="p-3">Nome</th>
+                            <th class="p-3">Plano</th>
+                            <th class="p-3">Jogos Fixos</th>
+                            <th class="p-3">Saldo Créditos</th>
+                            <th class="p-3 text-center">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="admin-table-body" class="divide-y divide-gray-100">
+                        <!-- Injetado via Javascript -->
+                    </tbody>
+                </table>
+            </div>
         </div>
     </section>
 </div>
