@@ -25,6 +25,42 @@
     let userSession = {};
     let chavePixAtual = "Não configurada";
 
+    function formatarTelefone(input) {
+        let value = input.value.replace(/\D/g, "");
+        if (value.length > 11) value = value.slice(0, 11);
+        if (value.length > 10) {
+            input.value = `(${value.slice(0, 2)}) ${value.slice(2, 7)}-${value.slice(7)}`;
+        } else if (value.length > 6) {
+            input.value = `(${value.slice(0, 2)}) ${value.slice(2, 6)}-${value.slice(6)}`;
+        } else if (value.length > 2) {
+            input.value = `(${value.slice(0, 2)}) ${value.slice(2)}`;
+        } else if (value.length > 0) {
+            input.value = `(${value.slice(0, 2)}`;
+        } else {
+            input.value = "";
+        }
+    }
+
+    function formatarDataHora(dataStr) {
+        if (!dataStr) return "";
+        try {
+            const partes = String(dataStr).split(" ");
+            if (partes.length === 2) {
+                const data = partes[0];
+                const horaMinSec = partes[1].split(":");
+                if (horaMinSec.length >= 2) {
+                    return `${data} ${horaMinSec[0]}:${horaMinSec[1]}`;
+                }
+            }
+            const d = new Date(dataStr);
+            if (!isNaN(d.getTime())) {
+                const pad = (n) => String(n).padStart(2, '0');
+                return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            }
+        } catch (e) {}
+        return dataStr;
+    }
+
     async function apiCall(action, payload = {}) {
         document.getElementById('loading').classList.remove('hidden');
         payload.action = action;
@@ -129,7 +165,7 @@
         currentData.nome = document.getElementById('reg-nome').value;
         currentData.celular = document.getElementById('reg-celular').value;
         currentData.dataNascimento = document.getElementById('reg-data').value;
-        currentData.chavePix = document.getElementById('reg-chave-pix').value;
+        currentData.chavePix = "";
         
         if(!currentData.nome || !currentData.celular || !currentData.dataNascimento) 
             return alert("Preencha todos os campos obrigatórios.");
@@ -296,7 +332,7 @@
                 res.pagamentos.forEach(p => {
                     areaPagamentos.innerHTML += `
                         <div class="flex justify-between items-center bg-gray-50 p-2 rounded text-sm border-l-4 border-green-500">
-                            <span>Data: <strong>${p.data}</strong></span>
+                            <span>Data: <strong>${formatarDataHora(p.data)}</strong></span>
                             <span class="bg-green-100 text-green-800 font-bold px-2 py-0.5 rounded">+${p.creditos} Créditos</span>
                         </div>
                     `;
@@ -492,7 +528,7 @@
     <section id="sec-login">
         <h2 class="text-xl font-semibold mb-4 text-center">Acessar Área do Participante</h2>
         <div class="space-y-4">
-            <input type="text" id="login-celular" placeholder="Número do Celular (com DDD)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+            <input type="text" id="login-celular" oninput="formatarTelefone(this)" placeholder="Número do Celular (com DDD)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
             <input type="date" id="login-data" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
             <button onclick="doLogin()" class="w-full bg-green-600 text-white p-3 rounded font-bold hover:bg-green-700">Entrar no Painel</button>
         </div>
@@ -509,10 +545,9 @@
             <strong>Atenção:</strong> Informe seu WhatsApp real para receber avisos e notificações de rateios premiados!
         </div>
         <div class="space-y-4">
-            <input type="text" id="reg-nome" placeholder="Nome Completo" class="w-full p-2 border rounded">
-            <input type="text" id="reg-celular" placeholder="Celular WhatsApp (com DDD)" class="w-full p-2 border rounded">
-            <input type="date" id="reg-data" class="w-full p-2 border rounded">
-            <input type="text" id="reg-chave-pix" placeholder="Sua Chave PIX (para receber prêmios)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+            <input type="text" id="reg-nome" placeholder="Nome Completo" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+            <input type="text" id="reg-celular" oninput="formatarTelefone(this)" placeholder="Celular WhatsApp (com DDD)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+            <input type="date" id="reg-data" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
             <div class="flex justify-between items-center pt-2">
                 <button onclick="goToLogin()" class="text-gray-600 hover:underline">Voltar</button>
                 <button onclick="nextRegisterStep()" class="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700">Avançar</button>
