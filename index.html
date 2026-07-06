@@ -61,6 +61,9 @@
         return dataStr;
     }
 
+    let _ultimoResumoRateio = null;
+    let _ultimoIdSorteio = "";
+
     async function apiCall(action, payload = {}) {
         document.getElementById('loading').classList.remove('hidden');
         payload.action = action;
@@ -72,10 +75,22 @@
             });
             const data = await response.json();
             document.getElementById('loading').classList.add('hidden');
+            if (!data.success && data.message && data.message.startsWith("Erro interno")) {
+                // Erro já notificado por email pelo servidor
+                alert("Ocorreu um erro no servidor. O administrador foi notificado automaticamente.");
+            }
             return data;
         } catch (error) {
             document.getElementById('loading').classList.add('hidden');
-            alert("Erro de comunicação com o servidor.");
+            // Tenta notificar erro via servidor
+            try {
+                fetch(APPS_SCRIPT_URL, {
+                    method: "POST",
+                    body: JSON.stringify({ action: "solicitarAjuda", logado: false, nome: "SISTEMA", celular: "-", mensagem: "ERRO FRONTEND: " + error.message + " | Ação: " + action }),
+                    headers: { "Content-Type": "text/plain" }
+                });
+            } catch(e2) {}
+            alert("Erro de comunicação com o servidor. Tente novamente em instantes.");
             return { success: false };
         }
     }
@@ -443,7 +458,15 @@
         }
     }
 
-    // PROCESSO DE APURAÇÃO EM 2 ETAPAS (NOVO)
+    // Botão de validar pagamento na tabela admin
+    async function registrarPagamento(celular) {
+        if(!confirm(`Confirmar pagamento e adicionar +4 créditos para o celular ${celular}?`)) return;
+        const res = await apiCall("registerPayment", { token: adminToken, celular: celular });
+        alert(res.message);
+        if(res.success) loadAdminData();
+    }
+
+    // PROCESSO DE APURAÇÃO EM 2 ETAPAS
     async function executarEtapa1Conferencia() {
         const idSorteio = document.getElementById('adm-concurso-id').value;
         const dezenas = document.getElementById('adm-dezenas-sorteadas').value;
@@ -458,8 +481,15 @@
 
         if(res.success) {
             alert(res.message);
-            // Libera o campo de prêmio e o botão de rateio final
-            document.getElementById('adm-premio-total').disabled = false;
+            // Se não houve contemplados, bloqueia o campo de prêmio e zera automaticamente
+            const premioInput = document.getElementById('adm-premio-total');
+            if (!res.contemplado) {
+                premioInput.value = "0";
+                premioInput.disabled = true;
+            } else {
+                premioInput.value = "";
+                premioInput.disabled = false;
+            }
             document.getElementById('btn-etapa2-rateio').disabled = false;
             document.getElementById('btn-etapa2-rateio').classList.remove('bg-gray-400', 'cursor-not-allowed');
             document.getElementById('btn-etapa2-rateio').classList.add('bg-amber-600', 'hover:bg-amber-700');
@@ -473,7 +503,7 @@
         const dezenas = document.getElementById('adm-dezenas-sorteadas').value;
         const premioTotal = document.getElementById('adm-premio-total').value;
 
-        if(!premioTotal || parseFloat(premioTotal) < 0) return alert("Por favor, preencha o valor do prêmio!");
+        if(premioTotal === "" || parseFloat(premioTotal) < 0) return alert("Por favor, preencha o valor do prêmio!");
 
         const res = await apiCall("finalizarRateioAdmin", {
             token: adminToken,
@@ -483,7 +513,10 @@
         });
 
         if(res.success) {
-            // Monta o Modal de Resumo do Rateio na Tela do Admin
+            // Salva resumo globalmente para uso no botão de email
+            _ultimoResumoRateio = res.resumo;
+            _ultimoIdSorteio = idSorteio;
+
             document.getElementById('modal-total-premio').innerText = "R$ " + Number(res.resumo.premioTotal).toFixed(2);
             document.getElementById('modal-total-participantes').innerText = res.resumo.totalParticipantes;
             
@@ -498,7 +531,6 @@
                 `;
             });
 
-            // Exibe a janela modal na tela
             document.getElementById('modal-rateio-container').classList.remove('hidden');
             
             // Reseta controles de proteção
@@ -514,8 +546,50 @@
         }
     }
 
+    async function enviarEmailRateio() {
+        if(!_ultimoResumoRateio) return alert("Nenhum resumo disponível para enviar.");
+        const res = await apiCall("enviarEmailRateio", {
+            token: adminToken,
+            idSorteio: _ultimoIdSorteio,
+            resumo: _ultimoResumoRateio
+        });
+        alert(res.message);
+    }
+
     function fecharModalRateio() {
         document.getElementById('modal-rateio-container').classList.add('hidden');
+    }
+
+    // MODAL PRECISO DE AJUDA
+    function abrirModalAjuda() {
+        document.getElementById('ajuda-nome').value = userSession.nome || "";
+        document.getElementById('ajuda-celular').value = userSession.celular || "";
+        const isLogado = !!(userSession.nome);
+        document.getElementById('ajuda-campos-manuais').classList.toggle('hidden', isLogado);
+        document.getElementById('ajuda-nome').readOnly = isLogado;
+        document.getElementById('ajuda-celular').readOnly = isLogado;
+        document.getElementById('modal-ajuda').classList.remove('hidden');
+    }
+
+    function fecharModalAjuda() {
+        document.getElementById('modal-ajuda').classList.add('hidden');
+        document.getElementById('ajuda-mensagem').value = "";
+    }
+
+    async function enviarSolicitacaoAjuda() {
+        const nome = document.getElementById('ajuda-nome').value.trim();
+        const celular = document.getElementById('ajuda-celular').value.trim();
+        const mensagem = document.getElementById('ajuda-mensagem').value.trim();
+        if(!mensagem) return alert("Descreva sua dúvida ou problema antes de enviar.");
+        if(!nome) return alert("Informe seu nome para que possamos entrar em contato.");
+        const res = await apiCall("solicitarAjuda", {
+            logado: !!(userSession.nome),
+            nome: nome,
+            celular: celular,
+            mensagem: mensagem
+        });
+        alert(res.message);
+        if(res.success) fecharModalAjuda();
     }
 </script>
 
@@ -809,10 +883,10 @@
     </section>
 </div>
 
-<!-- ADIÇÃO: TELA MODAL DE EXIBIÇÃO DE VALORES E PARTICIPANTES APÓS RATEIO -->
+<!-- MODAL RESUMO DO RATEIO -->
 <div id="modal-rateio-container" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4 max-h-[85vh] flex flex-col justify-between">
-        <div>
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4 max-h-[85vh] flex flex-col">
+        <div class="flex-1 overflow-y-auto">
             <div class="flex items-center justify-between border-b pb-2 mb-3">
                 <h3 class="text-xl font-bold text-green-700">🏆 Resumo do Rateio</h3>
                 <span class="text-xs bg-green-100 text-green-800 font-bold px-2 py-0.5 rounded-full">Sucesso</span>
@@ -828,13 +902,47 @@
                 </div>
             </div>
             <p class="text-xs font-bold text-gray-600 uppercase tracking-wider mb-1">Demonstrativo de Repasse por Membro:</p>
-            <div id="modal-lista-rateio" class="divide-y overflow-y-auto max-h-56 pr-1 border rounded-lg p-2 bg-white">
+            <div id="modal-lista-rateio" class="divide-y overflow-y-auto max-h-48 pr-1 border rounded-lg p-2 bg-white">
                 <!-- Populado dinamicamente via JS -->
             </div>
         </div>
-        <button onclick="fecharModalRateio()" class="w-full bg-gray-800 text-white font-bold py-2.5 rounded-lg shadow hover:bg-gray-900 transition text-sm">Fechar Relatório</button>
+        <div class="flex gap-2 pt-2 border-t">
+            <button onclick="enviarEmailRateio()" class="flex-1 bg-green-600 text-white font-bold py-2.5 rounded-lg shadow hover:bg-green-700 transition text-sm">📧 Enviar por E-mail</button>
+            <button onclick="fecharModalRateio()" class="flex-1 bg-gray-800 text-white font-bold py-2.5 rounded-lg shadow hover:bg-gray-900 transition text-sm">Fechar</button>
+        </div>
     </div>
 </div>
+
+<!-- MODAL PRECISO DE AJUDA -->
+<div id="modal-ajuda" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+        <div class="flex items-center justify-between border-b pb-2">
+            <h3 class="text-lg font-bold text-blue-700">❓ Preciso de Ajuda</h3>
+            <button onclick="fecharModalAjuda()" class="text-gray-400 hover:text-gray-700 text-2xl leading-none">&times;</button>
+        </div>
+        <div class="space-y-3">
+            <div id="ajuda-campos-manuais">
+                <label class="block text-xs font-bold text-gray-600 mb-0.5">Seu Nome:</label>
+                <input type="text" id="ajuda-nome" placeholder="Nome completo" class="w-full p-2 border rounded text-sm focus:ring-1 focus:ring-blue-500">
+                <label class="block text-xs font-bold text-gray-600 mb-0.5 mt-2">Seu Celular (WhatsApp):</label>
+                <input type="text" id="ajuda-celular" oninput="formatarTelefone(this)" placeholder="(00) 00000-0000" class="w-full p-2 border rounded text-sm focus:ring-1 focus:ring-blue-500">
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-gray-600 mb-0.5">Descreva sua dúvida ou problema:</label>
+                <textarea id="ajuda-mensagem" rows="4" placeholder="Explique detalhadamente o que está acontecendo..." class="w-full p-2 border rounded text-sm focus:ring-1 focus:ring-blue-500 resize-none"></textarea>
+            </div>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="fecharModalAjuda()" class="flex-1 border border-gray-300 text-gray-600 font-bold py-2 rounded-lg text-sm hover:bg-gray-50">Cancelar</button>
+            <button onclick="enviarSolicitacaoAjuda()" class="flex-1 bg-blue-600 text-white font-bold py-2 rounded-lg text-sm hover:bg-blue-700">📤 Enviar Solicitação</button>
+        </div>
+    </div>
+</div>
+
+<!-- BOTÃO FLUTUANTE PRECISO DE AJUDA -->
+<button onclick="abrirModalAjuda()" class="fixed bottom-5 right-5 z-40 bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-3 rounded-full shadow-lg flex items-center gap-2 text-sm transition-all hover:scale-105 active:scale-95">
+    ❓ Preciso de Ajuda
+</button>
 
 </body>
 </html>
