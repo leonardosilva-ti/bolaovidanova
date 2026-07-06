@@ -3,10 +3,378 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hello World</title>
+    <title>Bolão Mega Sena</title>
+    <!-- Tailwind CSS para estilização rápida -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .hidden { display: none !important; }
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        /* Remove setas padrões de input type=number */
+        input::-webkit-outer-spin-button,
+        input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; }
+    </style>
 </head>
-<body>
-    <h1>Hello World!</h1>
-    <p>Minha primeira página HTML.</p>
+<body class="bg-gray-100 text-gray-800 font-sans p-4 md:p-10">
+
+<script>
+    // ====== CONFIGURAÇÃO ======
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzH06I0XCBUbhbQCaSVdVdRZ0DCi8-oYd2TH36W7fIilOAMYvy3if11uQtFXPOhBKmUOQ/exec"; 
+    // ==========================
+
+    let currentData = {}; 
+    let adminToken = "";
+
+    async function apiCall(action, payload = {}) {
+        document.getElementById('loading').classList.remove('hidden');
+        payload.action = action;
+        try {
+            const response = await fetch(APPS_SCRIPT_URL, {
+                method: "POST",
+                body: JSON.stringify(payload),
+                headers: { "Content-Type": "text/plain" }
+            });
+            const data = await response.json();
+            document.getElementById('loading').classList.add('hidden');
+            return data;
+        } catch (error) {
+            document.getElementById('loading').classList.add('hidden');
+            alert("Erro de comunicação com o servidor.");
+            return { success: false };
+        }
+    }
+
+    function showSection(id) {
+        document.querySelectorAll('section').forEach(s => s.classList.add('hidden'));
+        document.getElementById(id).classList.remove('hidden');
+        document.getElementById(id).classList.add('fade-in');
+    }
+
+    function goToRegister() { showSection('sec-register-1'); }
+    function goToLogin() { showSection('sec-login'); }
+    function goToAdmin() { showSection('sec-admin-login'); }
+
+    // LOGIN
+    async function doLogin() {
+        const cel = document.getElementById('login-celular').value;
+        const dt = document.getElementById('login-data').value;
+        if(!cel || !dt) return alert("Preencha todos os campos!");
+        
+        const res = await apiCall("login", { celular: cel, dataNascimento: dt });
+        if(res.success) {
+            document.getElementById('dash-nome').innerText = res.user.nome;
+            document.getElementById('dash-plano').innerText = res.user.plano;
+            document.getElementById('dash-tipo').innerText = res.user.tipoAposta;
+            document.getElementById('dash-apostas').innerText = res.user.apostasRestantes;
+            document.getElementById('dash-jogos').innerText = res.user.jogos || "Nenhum";
+            showSection('sec-dashboard');
+        } else {
+            alert(res.message);
+        }
+    }
+
+    // REGISTRO - ETAPA 1
+    function nextRegisterStep() {
+        currentData.nome = document.getElementById('reg-nome').value;
+        currentData.celular = document.getElementById('reg-celular').value;
+        currentData.dataNascimento = document.getElementById('reg-data').value;
+        
+        if(!currentData.nome || !currentData.celular || !currentData.dataNascimento) 
+            return alert("Preencha todos os campos.");
+            
+        showSection('sec-register-2');
+    }
+
+    // REGISTRO - ETAPA 2 (Plano)
+    function selectPlan(plano) {
+        currentData.plano = plano;
+        showSection('sec-register-3');
+        if(plano === "Dobrado") {
+            document.getElementById('jogo2-container').classList.remove('hidden');
+        } else {
+            document.getElementById('jogo2-container').classList.add('hidden');
+        }
+    }
+
+    // REGISTRO - ETAPA 3 (Tipo de Aposta)
+    function toggleNumerosSorte() {
+        const tipo = document.getElementById('reg-tipo').value;
+        if(tipo === "Número da sorte") {
+            document.getElementById('numeros-sorte-container').classList.remove('hidden');
+        } else {
+            document.getElementById('numeros-sorte-container').classList.add('hidden');
+        }
+    }
+
+    // LÓGICA DE VALIDAÇÃO E FILTRO DOS 6 MINI CAMPOS
+    function capturarEValidarJogos(className, identificadorJogo) {
+        const inputs = document.querySelectorAll(className);
+        let numeros = [];
+
+        for (let input of inputs) {
+            let valor = parseInt(input.value, 10);
+
+            if (isNaN(valor) || valor < 1 || valor > 60) {
+                alert(`Preencha todos os 6 campos do ${identificadorJogo} com números de 01 a 60.`);
+                input.focus();
+                return null;
+            }
+
+            // Formata adicionando zero à esquerda se for menor que 10 (ex: "05")
+            let formatado = valor < 10 ? "0" + valor : "" + valor;
+
+            if (numeros.includes(formatado)) {
+                alert(`Número repetido (${formatado}) detectado no ${identificadorJogo}. Escolha 6 números diferentes!`);
+                input.focus();
+                return null;
+            }
+            numeros.push(formatado);
+        }
+
+        // Ordena do menor para o maior para manter a planilha limpa e legível
+        numeros.sort((a, b) => parseInt(a) - parseInt(b));
+        return numeros.join(",");
+    }
+
+    async function finishRegister() {
+        currentData.tipoAposta = document.getElementById('reg-tipo').value;
+        currentData.jogosCadastrados = "";
+
+        if(currentData.tipoAposta === "Número da sorte") {
+            const jogo1Str = capturarEValidarJogos('.j1-num', 'Jogo 1');
+            if(!jogo1Str) return; // Interrompe se a validação falhar
+            currentData.jogosCadastrados = jogo1Str;
+
+            if(currentData.plano === "Dobrado") {
+                const jogo2Str = capturarEValidarJogos('.j2-num', 'Jogo 2');
+                if(!jogo2Str) return; 
+                currentData.jogosCadastrados += " | " + jogo2Str;
+            }
+        }
+
+        const res = await apiCall("register", currentData);
+        if(res.success) {
+            alert(res.message);
+            doLoginAfterRegister(currentData.celular, currentData.dataNascimento);
+        } else {
+            alert(res.message);
+        }
+    }
+
+    async function doLoginAfterRegister(celular, data) {
+        document.getElementById('login-celular').value = celular;
+        document.getElementById('login-data').value = data;
+        await doLogin();
+    }
+
+    // ADMIN
+    async function doAdminLogin() {
+        const user = document.getElementById('admin-user').value;
+        const pass = document.getElementById('admin-pass').value;
+        const res = await apiCall("adminLogin", { user, pass });
+        if(res.success) {
+            adminToken = res.token;
+            loadAdminData();
+        } else {
+            alert(res.message);
+        }
+    }
+
+    async function loadAdminData() {
+        const res = await apiCall("getAdminData", { token: adminToken });
+        if(res.success) {
+            const tbody = document.getElementById('admin-table-body');
+            tbody.innerHTML = "";
+            res.participantes.forEach(p => {
+                tbody.innerHTML += `
+                    <tr class="border-b">
+                        <td class="p-2">${p.nome}</td>
+                        <td class="p-2">${p.plano}</td>
+                        <td class="p-2">${p.tipoAposta === "Aleatório" ? "Aleatório" : p.jogos}</td>
+                        <td class="p-2 font-bold ${p.apostasRestantes > 0 ? 'text-green-600' : 'text-red-600'}">${p.apostasRestantes}</td>
+                        <td class="p-2"><button onclick="registrarPagamento('${p.celular}')" class="bg-green-500 text-white px-2 py-1 rounded text-sm">Validar Pagamento</button></td>
+                    </tr>
+                `;
+            });
+            showSection('sec-admin-dash');
+        }
+    }
+
+    async function registrarPagamento(celular) {
+        if(confirm("Confirmar pagamento e liberar 4 apostas?")) {
+            const res = await apiCall("registerPayment", { token: adminToken, celular });
+            alert(res.message);
+            loadAdminData();
+        }
+    }
+
+    async function fazerApostaGeral() {
+        if(confirm("Deseja gerar os jogos para todos os usuários ativos? (Isso consumirá 1 aposta de cada)")) {
+            const res = await apiCall("fazerAposta", { token: adminToken });
+            alert(res.message);
+            loadAdminData();
+        }
+    }
+</script>
+
+<div class="max-w-3xl mx-auto bg-white p-6 rounded-lg shadow-md mt-10">
+    <h1 class="text-3xl font-bold text-center text-green-700 mb-6">Bolão Mega Sena</h1>
+
+    <div id="loading" class="hidden text-center text-blue-600 font-bold mb-4">Processando, aguarde...</div>
+
+    <!-- SEÇÃO 1: LOGIN -->
+    <section id="sec-login">
+        <h2 class="text-xl font-semibold mb-4 text-center">Acessar Área do Participante</h2>
+        <div class="space-y-4">
+            <input type="text" id="login-celular" placeholder="Número do Celular (com DDD)" class="w-full p-2 border rounded">
+            <input type="date" id="login-data" class="w-full p-2 border rounded">
+            <button onclick="doLogin()" class="w-full bg-green-600 text-white p-3 rounded font-bold hover:bg-green-700">Entrar</button>
+        </div>
+        <div class="mt-6 text-center space-y-2">
+            <p>Não tem cadastro? <button onclick="goToRegister()" class="text-blue-600 underline font-semibold">Cadastre-se aqui</button></p>
+            <p><button onclick="goToAdmin()" class="text-gray-500 text-sm hover:underline">Acesso Administrativo</button></p>
+        </div>
+    </section>
+
+    <!-- SEÇÃO 2: REGISTRO (DADOS) -->
+    <section id="sec-register-1" class="hidden">
+        <h2 class="text-xl font-semibold mb-2">Novo Cadastro</h2>
+        <div class="bg-yellow-100 text-yellow-800 p-3 rounded mb-4 text-sm">
+            <strong>Atenção:</strong> Informe um número que seja do WhatsApp. Este número será adicionado ao nosso grupo oficial para acompanhamento do bolão!
+        </div>
+        <div class="space-y-4">
+            <input type="text" id="reg-nome" placeholder="Nome Completo" class="w-full p-2 border rounded">
+            <input type="text" id="reg-celular" placeholder="Celular WhatsApp (com DDD)" class="w-full p-2 border rounded">
+            <input type="date" id="reg-data" class="w-full p-2 border rounded">
+            <div class="flex justify-between">
+                <button onclick="goToLogin()" class="text-gray-600">Voltar</button>
+                <button onclick="nextRegisterStep()" class="bg-blue-600 text-white px-6 py-2 rounded">Avançar</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- SEÇÃO 3: REGISTRO (PLANO) -->
+    <section id="sec-register-2" class="hidden">
+        <h2 class="text-xl font-semibold mb-4">Escolha seu Plano</h2>
+        <div class="grid md:grid-cols-2 gap-4">
+            <div class="border rounded-lg p-5 cursor-pointer hover:border-blue-500 hover:shadow-lg transition bg-white flex flex-col" onclick="selectPlan('Padrão')">
+                <h3 class="text-2xl font-bold text-gray-800">Padrão</h3>
+                <p class="text-blue-600 font-bold text-xl mb-3">R$ 28,00 /mês</p>
+                <p class="text-gray-600 mb-4">Toda quinta-feira* uma aposta, durante 4 semanas.</p>
+                <div class="mt-auto bg-gray-50 p-3 rounded text-sm text-gray-700">
+                    Se o bolão for premiado, você recebe a cota padrão proporcional.
+                </div>
+            </div>
+            <div class="border rounded-lg p-5 cursor-pointer hover:border-purple-500 hover:shadow-lg transition bg-white border-purple-200 flex flex-col" onclick="selectPlan('Dobrado')">
+                <h3 class="text-2xl font-bold text-purple-700">Dobrado</h3>
+                <p class="text-purple-600 font-bold text-xl mb-3">R$ 54,00 /mês</p>
+                <p class="text-gray-600 mb-4">Toda quinta-feira* duas apostas, durante 4 semanas.</p>
+                <div class="mt-auto bg-purple-50 p-3 rounded text-sm text-gray-700">
+                    <strong>Vantagem:</strong> Se o bolão for premiado, você recebe o <strong>dobro do valor</strong> dos participantes do plano Padrão!
+                </div>
+            </div>
+        </div>
+        <button onclick="showSection('sec-register-1')" class="mt-6 text-gray-600">Voltar</button>
+    </section>
+
+    <!-- SEÇÃO 4: REGISTRO (TIPO DE APOSTA) -->
+    <section id="sec-register-3" class="hidden">
+        <h2 class="text-xl font-semibold mb-4">Como deseja gerar seus jogos?</h2>
+        <select id="reg-tipo" class="w-full p-2 border rounded mb-6" onchange="toggleNumerosSorte()">
+            <option value="Aleatório">Aleatório (O sistema gera para você a cada sorteio)</option>
+            <option value="Número da sorte">Número da Sorte (Sempre os mesmos números)</option>
+        </select>
+
+        <!-- NOVO CONTAINER COM OS 6 MINI CAMPOS -->
+        <div id="numeros-sorte-container" class="hidden bg-gray-50 p-4 border rounded mb-6">
+            <p class="text-sm text-gray-600 mb-4 text-center">Insira 6 números de <strong>01 a 60</strong> por jogo:</p>
+            
+            <div class="mb-6">
+                <label class="block font-bold mb-2 text-sm text-gray-700">Números do Jogo 1</label>
+                <div class="flex gap-2 justify-center">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-lg focus:border-green-500 focus:outline-none bg-white j1-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-lg focus:border-green-500 focus:outline-none bg-white j1-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-lg focus:border-green-500 focus:outline-none bg-white j1-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-lg focus:border-green-500 focus:outline-none bg-white j1-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-lg focus:border-green-500 focus:outline-none bg-white j1-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-gray-300 rounded-lg font-bold text-lg focus:border-green-500 focus:outline-none bg-white j1-num">
+                </div>
+            </div>
+
+            <div id="jogo2-container" class="hidden mb-4">
+                <label class="block font-bold mb-2 text-sm text-purple-700">Números do Jogo 2 (Plano Dobrado)</label>
+                <div class="flex gap-2 justify-center">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-lg focus:border-purple-500 focus:outline-none bg-white j2-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-lg focus:border-purple-500 focus:outline-none bg-white j2-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-lg focus:border-purple-500 focus:outline-none bg-white j2-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-lg focus:border-purple-500 focus:outline-none bg-white j2-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-lg focus:border-purple-500 focus:outline-none bg-white j2-num">
+                    <input type="number" min="1" max="60" placeholder="--" class="w-12 h-12 text-center border-2 border-purple-300 rounded-lg font-bold text-lg focus:border-purple-500 focus:outline-none bg-white j2-num">
+                </div>
+            </div>
+        </div>
+
+        <div class="flex justify-between">
+            <button onclick="showSection('sec-register-2')" class="text-gray-600">Voltar</button>
+            <button onclick="finishRegister()" class="bg-green-600 text-white px-6 py-2 rounded">Finalizar Cadastro</button>
+        </div>
+    </section>
+
+    <!-- SEÇÃO 5: DASHBOARD PARTICIPANTE -->
+    <section id="sec-dashboard" class="hidden">
+        <h2 class="text-2xl font-bold mb-4">Olá, <span id="dash-nome"></span>!</h2>
+        <div class="bg-white border rounded p-4 mb-4 shadow-sm">
+            <p><strong>Seu Plano:</strong> <span id="dash-plano"></span></p>
+            <p><strong>Tipo de Aposta:</strong> <span id="dash-tipo"></span></p>
+            <p><strong>Apostas Restantes (semanas pagas):</strong> <span id="dash-apostas" class="font-bold text-blue-600 text-lg"></span></p>
+            <p class="mt-2"><strong>Seus Jogos (se fixo):</strong> <span id="dash-jogos" class="text-gray-600"></span></p>
+        </div>
+        <button onclick="goToLogin()" class="bg-gray-200 text-gray-800 px-4 py-2 rounded w-full">Sair</button>
+    </section>
+
+    <!-- SEÇÃO 6: LOGIN ADMIN -->
+    <section id="sec-admin-login" class="hidden">
+        <h2 class="text-xl font-bold mb-4 text-center">Administração</h2>
+        <input type="text" id="admin-user" placeholder="Usuário" class="w-full p-2 border rounded mb-3">
+        <input type="password" id="admin-pass" placeholder="Senha" class="w-full p-2 border rounded mb-4">
+        <button onclick="doAdminLogin()" class="w-full bg-black text-white p-2 rounded">Entrar no Admin</button>
+        <button onclick="goToLogin()" class="w-full mt-2 text-gray-600">Voltar ao site</button>
+    </section>
+
+    <!-- SEÇÃO 7: DASHBOARD ADMIN -->
+    <section id="sec-admin-dash" class="hidden">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-2xl font-bold">Painel de Controle</h2>
+            <button onclick="goToLogin()" class="text-red-500 font-bold">Sair</button>
+        </div>
+
+        <div class="bg-blue-100 p-4 rounded mb-6 flex justify-between items-center">
+            <div>
+                <h3 class="font-bold text-blue-900">Processamento Semanal</h3>
+                <p class="text-sm text-blue-800">Clique aqui toda quarta-feira às 17h para processar.</p>
+            </div>
+            <button onclick="fazerApostaGeral()" class="bg-blue-600 text-white px-4 py-2 rounded font-bold shadow-lg hover:bg-blue-700">Fazer Aposta</button>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full bg-white border text-left">
+                <thead>
+                    <tr class="bg-gray-200 text-gray-700">
+                        <th class="p-2 border-b">Nome</th>
+                        <th class="p-2 border-b">Plano</th>
+                        <th class="p-2 border-b">Jogos/Tipo</th>
+                        <th class="p-2 border-b">Semanas Pagas</th>
+                        <th class="p-2 border-b">Ação</th>
+                    </tr>
+                </thead>
+                <tbody id="admin-table-body">
+                    <!-- Linhas via JS -->
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+
 </body>
 </html>
