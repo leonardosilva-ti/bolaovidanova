@@ -269,6 +269,23 @@
         }
     }
 
+    // REGISTRAR PAGAMENTO (VALIDAR CRÉDITOS)
+    async function registrarPagamento(celular) {
+        if (!adminToken) return alert("Sessão administrativa inválida ou expirada.");
+        
+        const res = await apiCall("registerPayment", { 
+            token: adminToken, 
+            celular: celular 
+        });
+
+        if (res.success) {
+            alert(res.message);
+            await loadAdminData(); // Recarrega a lista para mostrar o novo saldo de créditos em tempo real
+        } else {
+            alert(res.message);
+        }
+    }
+    
     async function salvarChavePixParticipante() {
         const pix = document.getElementById('dash-chave-pix').value;
         const res = await apiCall("updateParticipantPix", { celular: userSession.celular, chavePix: pix });
