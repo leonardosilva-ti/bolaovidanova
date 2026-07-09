@@ -24,6 +24,48 @@
     let adminToken = "";
     let userSession = {};
     let chavePixAtual = "Não configurada";
+    let weeklyInfoAtual = { premio: "", dataHora: "" };
+    let listaParticipantesGlob = [];
+
+    function abrirCalendario(pickerId) {
+        const picker = document.getElementById(pickerId);
+        if (picker && typeof picker.showPicker === 'function') {
+            picker.showPicker();
+        } else if (picker) {
+            picker.click();
+        }
+    }
+
+    function sincronizarDatePicker(picker, textId) {
+        if (!picker.value) return;
+        const parts = picker.value.split("-"); // yyyy-mm-dd
+        if (parts.length === 3) {
+            document.getElementById(textId).value = `${parts[2]}/${parts[1]}/${parts[0]}`;
+        }
+    }
+
+    function obterDataFormatadaAPI(dataStr) {
+        const val = dataStr.trim();
+        if (val.includes("/")) {
+            const parts = val.split("/");
+            if (parts.length === 3) {
+                return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+            }
+        }
+        return val;
+    }
+
+    function formatarDataInput(input) {
+        let value = input.value.replace(/\D/g, "");
+        if (value.length > 8) value = value.slice(0, 8);
+        if (value.length > 4) {
+            input.value = `${value.slice(0, 2)}/${value.slice(2, 4)}/${value.slice(4)}`;
+        } else if (value.length > 2) {
+            input.value = `${value.slice(0, 2)}/${value.slice(2)}`;
+        } else {
+            input.value = value;
+        }
+    }
 
     function formatarTelefone(input) {
         let value = input.value.replace(/\D/g, "");
@@ -117,13 +159,15 @@
     // LOGIN
     async function doLogin() {
         const cel = document.getElementById('login-celular').value;
-        const dt = document.getElementById('login-data').value;
+        const textVal = document.getElementById('login-data-text').value;
+        const dt = obterDataFormatadaAPI(textVal);
         if(!cel || !dt) return alert("Preencha todos os campos!");
         
         const res = await apiCall("login", { celular: cel, dataNascimento: dt });
         if(res.success) {
             userSession = res.user;
             chavePixAtual = res.chavePixBolao || "Não configurada";
+            weeklyInfoAtual = res.weeklyInfo || { premio: "", dataHora: "" };
             atualizarInterfaceDashboard();
             await carregarHistoricosPainel();
             showSection('sec-dashboard');
@@ -149,6 +193,16 @@
         document.getElementById('dash-edit-tipo').value = userSession.tipoAposta;
         document.getElementById('dash-next-plano').value = userSession.proximoPlano || "";
         toggleEditNumerosSorte();
+
+        // Alerta de 1 crédito restante
+        const avisoRecarga = document.getElementById('aviso-recarga');
+        if (avisoRecarga) {
+            if (Number(userSession.apostasRestantes) === 1) {
+                avisoRecarga.classList.remove('hidden');
+            } else {
+                avisoRecarga.classList.add('hidden');
+            }
+        }
     }
 
     // COPIAR CHAVE PIX
@@ -164,13 +218,21 @@
     function nextRegisterStep() {
         currentData.nome = document.getElementById('reg-nome').value;
         currentData.celular = document.getElementById('reg-celular').value;
-        currentData.dataNascimento = document.getElementById('reg-data').value;
+        currentData.dataNascimento = obterDataFormatadaAPI(document.getElementById('reg-data-text').value);
         currentData.chavePix = "";
         
         if(!currentData.nome || !currentData.celular || !currentData.dataNascimento) 
             return alert("Preencha todos os campos obrigatórios.");
             
         showSection('sec-register-2');
+    }
+
+    // DETALHES DO PLANO MODAL
+    function abrirModalDetalhesPlano() {
+        document.getElementById('modal-detalhes-plano').classList.remove('hidden');
+    }
+    function fecharModalDetalhesPlano() {
+        document.getElementById('modal-detalhes-plano').classList.add('hidden');
     }
 
     // REGISTRO - ETAPA 2
@@ -185,6 +247,21 @@
     }
 
     // REGISTRO - ETAPA 3
+    function selecionarTipoApostaReg(tipo) {
+        document.getElementById('reg-tipo').value = tipo;
+        const cardAleatorio = document.getElementById('card-tipo-aleatorio');
+        const cardFixo = document.getElementById('card-tipo-fixo');
+        
+        if (tipo === 'Aleatório') {
+            cardAleatorio.className = "border-2 border-green-600 bg-green-50 rounded-lg p-4 cursor-pointer hover:shadow transition flex flex-col items-center text-center";
+            cardFixo.className = "border-2 border-gray-200 rounded-lg p-4 cursor-pointer hover:border-blue-500 hover:shadow transition flex flex-col items-center text-center";
+        } else {
+            cardAleatorio.className = "border-2 border-gray-200 rounded-lg p-4 cursor-pointer hover:border-green-500 hover:shadow transition flex flex-col items-center text-center";
+            cardFixo.className = "border-2 border-blue-600 bg-blue-50 rounded-lg p-4 cursor-pointer hover:shadow transition flex flex-col items-center text-center";
+        }
+        toggleNumerosSorte();
+    }
+
     function toggleNumerosSorte() {
         const tipo = document.getElementById('reg-tipo').value;
         if(tipo === "Número da sorte") {
@@ -232,17 +309,30 @@
     }
 
     async function finishRegister() {
+        const btn = document.getElementById('btn-finish-register');
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = "⏳ Gerando cadastro, aguarde...";
+
         currentData.tipoAposta = document.getElementById('reg-tipo').value;
         currentData.jogosCadastrados = "";
 
         if(currentData.tipoAposta === "Número da sorte") {
             const jogo1Str = capturarEValidarJogos('.j1-num', 'Jogo 1');
-            if(!jogo1Str) return; 
+            if(!jogo1Str) {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+                return;
+            }
             currentData.jogosCadastrados = jogo1Str;
 
             if(currentData.plano === "Dobrado") {
                 const jogo2Str = capturarEValidarJogos('.j2-num', 'Jogo 2');
-                if(!jogo2Str) return; 
+                if(!jogo2Str) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                    return;
+                }
                 currentData.jogosCadastrados += " | " + jogo2Str;
             }
         }
@@ -253,12 +343,19 @@
             doLoginAfterRegister(currentData.celular, currentData.dataNascimento);
         } else {
             alert(res.message);
+            btn.disabled = false;
+            btn.innerHTML = originalText;
         }
     }
 
-    async function doLoginAfterRegister(celular, data) {
+    async function doLoginAfterRegister(celular, dataNascimentoAPI) {
         document.getElementById('login-celular').value = celular;
-        document.getElementById('login-data').value = data;
+        if (dataNascimentoAPI.includes("-")) {
+            const p = dataNascimentoAPI.split("-");
+            document.getElementById('login-data-text').value = `${p[2]}/${p[1]}/${p[0]}`;
+        } else {
+            document.getElementById('login-data-text').value = dataNascimentoAPI;
+        }
         await doLogin();
     }
 
@@ -356,44 +453,132 @@
                 });
             }
 
+            // Sorteio Atual Card Update
+            const pPremio = document.getElementById('dash-sorteio-premio');
+            const pData = document.getElementById('dash-sorteio-data');
+            const pJogosCont = document.getElementById('dash-sorteio-jogos-container');
+            
+            pPremio.innerText = weeklyInfoAtual.premio ? "R$ " + weeklyInfoAtual.premio : "A definir";
+            pData.innerText = weeklyInfoAtual.dataHora ? weeklyInfoAtual.dataHora : "Aguardando definição";
+            
+            // Procura rodada ativa em minhasApostas (que não está finalizada em res.sorteios)
+            let activeRoundId = null;
+            for (let idSort in res.minhasApostas) {
+                const isFinalized = res.sorteios.some(s => s.idSorteio === idSort);
+                if (!isFinalized) {
+                    activeRoundId = idSort;
+                    break;
+                }
+            }
+            
+            if (activeRoundId && res.minhasApostas[activeRoundId]) {
+                const apostas = res.minhasApostas[activeRoundId];
+                let allGames = [];
+                apostas.forEach(ap => {
+                    if (ap.jogos) {
+                        const splitGames = ap.jogos.split(" | ");
+                        allGames.push(...splitGames);
+                    }
+                });
+                
+                if (allGames.length > 0) {
+                    let gamesListHtml = allGames.map((g, idx) => `
+                        <div class="bg-gray-50 border rounded p-1 font-mono text-[11px] text-gray-700">
+                            Jogo ${idx + 1}: ${g}
+                        </div>
+                    `).join("");
+                    
+                    pJogosCont.innerHTML = `
+                        <details class="group cursor-pointer">
+                            <summary class="text-xs text-blue-600 font-bold hover:underline select-none">
+                                Ver meus ${allGames.length} jogo(s) na rodada
+                            </summary>
+                            <div class="mt-2 space-y-1 bg-gray-50 p-2 rounded border transition-all">
+                                ${gamesListHtml}
+                            </div>
+                        </details>
+                    `;
+                } else {
+                    pJogosCont.innerHTML = `<span class="text-xs text-gray-400 italic">Aguardando cadastro dos jogos</span>`;
+                }
+            } else {
+                pJogosCont.innerHTML = `<span class="text-xs text-gray-400 italic">Aguardando cadastro dos jogos</span>`;
+            }
+
             const areaSorteios = document.getElementById('hist-sorteios-container');
             areaSorteios.innerHTML = "";
             if(res.sorteios.length === 0) {
                 areaSorteios.innerHTML = `<p class="text-sm text-gray-500 text-center py-4">Nenhum sorteio registrado no sistema.</p>`;
             } else {
-                res.sorteios.forEach(s => {
-                    const apostasDaRodada = res.apostasDetalhe[s.idSorteio] || [];
-                    let apostasHtml = "";
+                const minhasApostas = res.minhasApostas || {};
+                res.sorteios.forEach((s, idx) => {
+                    const minhas = minhasApostas[s.idSorteio] || [];
+                    const houvePremiacao = Number(s.premioTotal) > 0;
 
-                    apostasDaRodada.forEach(ap => {
-                        const ehDono = (ap.celular == userSession.celular) ? "bg-yellow-50 font-semibold border border-yellow-300" : "";
-                        apostasHtml += `
-                            <div class="p-2 text-xs border-b last:border-0 ${ehDono}">
-                                <div class="flex justify-between">
-                                    <span class="text-gray-700 font-medium">${ap.nome} (${ap.plano})</span>
-                                    <span class="text-blue-600 font-bold">${ap.acertos}</span>
-                                </div>
-                                <div class="text-gray-500 font-mono mt-0.5">${ap.jogos}</div>
-                                ${ap.premio > 0 ? `<div class="text-green-600 font-bold mt-0.5">🏆 Prêmio Recebido: R$ ${Number(ap.premio).toFixed(2)}</div>` : ''}
-                            </div>
-                        `;
+                    // Extrair data do ID (formato SORT-AAAAMMDD-HHmm)
+                    let dataExibir = s.idSorteio;
+                    const match = s.idSorteio.match(/(\d{4})(\d{2})(\d{2})/);
+                    if (match) dataExibir = `${match[3]}/${match[2]}/${match[1]}`;
+
+                    // Meu melhor jogo nessa rodada
+                    let melhorAcertos = -1;
+                    let melhorJogo = "";
+                    let jogoPremiadoHtml = "";
+
+                    minhas.forEach(ap => {
+                        const acertosArr = String(ap.acertos).match(/(\d+) acertos/g) || [];
+                        acertosArr.forEach((a, ji) => {
+                            const num = parseInt(a);
+                            const jogos = ap.jogos.split(" | ");
+                            if(num > melhorAcertos) {
+                                melhorAcertos = num;
+                                melhorJogo = jogos[ji] || ap.jogos;
+                            }
+                        });
+                        if(Number(ap.premio) > 0) {
+                            jogoPremiadoHtml = `<div class="mt-2 bg-yellow-50 border border-yellow-300 rounded p-2 text-xs">
+                                🏆 <strong class="text-yellow-800">Você foi premiado nessa rodada!</strong><br>
+                                Prêmio recebido: <strong class="text-green-700">R$ ${Number(ap.premio).toFixed(2)}</strong>
+                            </div>`;
+                        }
                     });
+
+                    const melhorJogoHtml = melhorAcertos >= 0 ? `
+                        <div class="mt-2 text-xs">
+                            <span class="text-gray-500">Seu melhor jogo: </span>
+                            <span class="font-mono font-bold text-blue-700">${melhorJogo}</span>
+                            <span class="ml-1 bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-bold">${melhorAcertos} acerto(s)</span>
+                        </div>` : `<div class="mt-2 text-xs text-gray-400 italic">Você não participou dessa rodada.</div>`;
+
+                    const detailId = `detalhe-sorteio-${idx}`;
 
                     areaSorteios.innerHTML += `
                         <div class="border rounded-lg bg-white overflow-hidden shadow-sm">
-                            <div class="bg-gray-800 text-white p-3 flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
-                                <div>
-                                    <span class="text-xs bg-blue-600 px-2 py-0.5 rounded font-bold uppercase tracking-wider">${s.idSorteio}</span>
-                                    <div class="text-sm mt-1">Sorteados: <strong class="text-green-400 font-mono text-base tracking-wide">${s.sorteados}</strong></div>
+                            <!-- RESUMO MINIMIZADO -->
+                            <div class="flex items-center justify-between p-3 cursor-pointer hover:bg-gray-50" onclick="document.getElementById('${detailId}').classList.toggle('hidden')">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs font-bold text-gray-500">${dataExibir}</span>
+                                    ${houvePremiacao
+                                        ? `<span class="bg-yellow-100 text-yellow-800 text-xs font-bold px-2 py-0.5 rounded-full">🏆 Premiado</span>`
+                                        : `<span class="bg-gray-100 text-gray-500 text-xs px-2 py-0.5 rounded-full">Sem premiação</span>`
+                                    }
+                                    <span class="text-[10px] text-gray-400 font-mono hidden sm:block">${s.sorteados}</span>
                                 </div>
-                                <div class="text-right">
-                                    <div class="text-xs text-gray-300">Prêmio Total: R$ ${Number(s.premioTotal).toFixed(2)}</div>
-                                    <div class="text-xs text-green-300 font-bold">Por Cota: R$ ${Number(s.rateioCota).toFixed(2)}</div>
-                                </div>
+                                <span class="text-xs text-blue-600 font-bold">+ Detalhes</span>
                             </div>
-                            <div class="p-2 bg-gray-50 font-bold text-xs text-gray-600 border-b">Apostas Realizadas pelo Grupo nesta Rodada:</div>
-                            <div class="max-h-40 overflow-y-auto divide-y bg-white">
-                                ${apostasHtml || '<p class="p-3 text-xs text-gray-400">Nenhum log de jogo salvo para esta rodada.</p>'}
+                            <!-- DETALHES EXPANDIDOS (ocultos por padrão) -->
+                            <div id="${detailId}" class="hidden border-t p-3 space-y-2">
+                                <div class="flex flex-wrap gap-2 items-center">
+                                    <span class="text-xs text-gray-500">Números sorteados:</span>
+                                    ${(s.sorteados || '').split(',').map(n => `<span class="w-7 h-7 flex items-center justify-center bg-green-600 text-white rounded-full text-xs font-bold font-mono">${n.trim()}</span>`).join('')}
+                                </div>
+                                ${jogoPremiadoHtml}
+                                ${melhorJogoHtml}
+                                ${minhas.length > 0 ? `
+                                <div class="pt-1">
+                                    <p class="text-[10px] uppercase font-bold text-gray-400 mb-1">Seus jogos nesta rodada:</p>
+                                    ${minhas.map(ap => `<div class="font-mono text-xs text-gray-700 bg-gray-50 rounded px-2 py-1">${ap.jogos} &nbsp;<span class="text-blue-600">(${ap.acertos})</span></div>`).join('')}
+                                </div>` : ''}
                             </div>
                         </div>
                     `;
@@ -418,20 +603,8 @@
     async function loadAdminData() {
         const res = await apiCall("getAdminData", { token: adminToken });
         if(res.success) {
-            const tbody = document.getElementById('admin-table-body');
-            tbody.innerHTML = "";
-            res.participantes.forEach(p => {
-                tbody.innerHTML += `
-                    <tr class="border-b">
-                        <td class="p-2 text-sm">${p.nome}</td>
-                        <td class="p-2 text-sm">${p.plano}</td>
-                        <td class="p-2 text-xs font-mono max-w-xs truncate">${p.tipoAposta === "Aleatório" ? "🎲 Aleatório" : p.jogos}</td>
-                        <td class="p-2 text-xs font-mono text-gray-600">${p.chavePix || '<span class="italic text-gray-400">Não cadastrada</span>'}</td>
-                        <td class="p-2 text-sm font-bold ${p.apostasRestantes > 0 ? 'text-green-600' : 'text-red-600'}">${p.apostasRestantes} cota(s)</td>
-                        <td class="p-2"><button onclick="registrarPagamento('${p.celular}')" class="bg-green-500 text-white px-2 py-1 rounded text-xs font-bold hover:bg-green-600">Validar +4 Crét.</button></td>
-                    </tr>
-                `;
-            });
+            listaParticipantesGlob = res.participantes || [];
+            renderizarTabelaParticipantes();
 
             const selectRodada = document.getElementById('adm-concurso-id');
             selectRodada.innerHTML = `<option value="">-- Selecione a Rodada --</option>`;
@@ -442,7 +615,56 @@
             }
 
             document.getElementById('adm-pix-key').value = res.chavePix || "";
+            if (res.weeklyInfo) {
+                document.getElementById('adm-sorteio-premio-val').value = res.weeklyInfo.premio || "";
+                document.getElementById('adm-sorteio-data-val').value = res.weeklyInfo.dataHora || "";
+            }
             showSection('sec-admin-dash');
+        }
+    }
+
+    function renderizarTabelaParticipantes() {
+        const apenasAtivos = document.getElementById('filtro-apenas-ativos').checked;
+        const tbody = document.getElementById('admin-table-body');
+        tbody.innerHTML = "";
+        
+        listaParticipantesGlob.forEach(p => {
+            if (apenasAtivos && p.status === "Inativo") return;
+            
+            const selectedAtivo = p.status === "Ativo" ? "selected" : "";
+            const selectedInativo = p.status === "Inativo" ? "selected" : "";
+            
+            tbody.innerHTML += `
+                <tr class="border-b hover:bg-gray-50">
+                    <td class="p-2 text-sm font-medium text-gray-900">${p.nome}</td>
+                    <td class="p-2 text-sm text-gray-600">${p.plano}</td>
+                    <td class="p-2 text-xs font-mono text-gray-500 max-w-xs truncate">${p.tipoAposta === "Aleatório" ? "🎲 Aleatório" : p.jogos}</td>
+                    <td class="p-2 text-xs font-mono text-gray-600">${p.chavePix || '<span class="italic text-gray-400">Não cadastrada</span>'}</td>
+                    <td class="p-2 text-sm font-bold ${p.apostasRestantes > 0 ? 'text-green-600' : 'text-red-600'}">${p.apostasRestantes} cota(s)</td>
+                    <td class="p-2 text-center flex items-center justify-center gap-2">
+                        <select onchange="alterarStatusParticipante('${p.celular}', this.value)" class="text-xs border rounded p-1 font-medium bg-white focus:outline-none">
+                            <option value="Ativo" ${selectedAtivo}>Ativo</option>
+                            <option value="Inativo" ${selectedInativo}>Inativo</option>
+                        </select>
+                        <button onclick="registrarPagamento('${p.celular}')" class="bg-green-500 text-white px-2.5 py-1 rounded text-xs font-bold hover:bg-green-600 shadow transition">Validar +4 Crét.</button>
+                    </td>
+                </tr>
+            `;
+        });
+    }
+
+    async function alterarStatusParticipante(celular, status) {
+        const res = await apiCall("updateParticipantStatus", {
+            token: adminToken,
+            celular: celular,
+            status: status
+        });
+        if (res.success) {
+            const p = listaParticipantesGlob.find(x => x.celular == celular);
+            if (p) p.status = status;
+            renderizarTabelaParticipantes();
+        } else {
+            alert(res.message);
         }
     }
 
@@ -452,13 +674,18 @@
         alert(res.message);
     }
 
-    async function fazerApostaGeral() {
-        if(confirm("Deseja gerar e consolidar a rodada de jogos de todos os usuários com créditos ativos?")) {
-            const res = await apiCall("fazerAposta", { token: adminToken });
-            alert(res.message);
-            loadAdminData();
-        }
+    async function salvarInformacoesSorteio() {
+        const premio = document.getElementById('adm-sorteio-premio-val').value;
+        const dataHora = document.getElementById('adm-sorteio-data-val').value;
+        const res = await apiCall("saveWeeklySorteio", {
+            token: adminToken,
+            premio: premio,
+            dataHora: dataHora
+        });
+        alert(res.message);
     }
+
+
 
     // PROCESSO DE APURAÇÃO EM 2 ETAPAS (NOVO)
     async function ejecutarEtapa1Conferencia() {
@@ -562,12 +789,24 @@
 
         <h2 class="text-xl font-semibold mb-4 text-center">Acessar Área do Participante</h2>
         <div class="space-y-4">
-            <input type="text" id="login-celular" oninput="formatarTelefone(this)" placeholder="Número do Celular (com DDD)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
-            <input type="date" id="login-data" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+            <div class="space-y-1">
+                <label class="block text-xs font-semibold text-gray-600">Celular WhatsApp:</label>
+                <input type="text" id="login-celular" oninput="formatarTelefone(this)" placeholder="Número do Celular (com DDD)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+            </div>
+            
+            <div class="space-y-1">
+                <label class="block text-xs font-semibold text-gray-600">Data de Nascimento (dd/mm/aaaa):</label>
+                <div class="flex gap-2">
+                    <input type="text" id="login-data-text" placeholder="DD/MM/AAAA" maxlength="10" oninput="formatarDataInput(this)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+                    <button onclick="abrirCalendario('login-data-picker')" class="bg-gray-200 hover:bg-gray-300 border p-2 rounded flex items-center justify-center shrink-0 w-11 h-11" title="Selecionar no calendário">📅</button>
+                    <input type="date" id="login-data-picker" onchange="sincronizarDatePicker(this, 'login-data-text')" class="w-0 h-0 border-0 opacity-0 absolute">
+                </div>
+            </div>
+            
             <button onclick="doLogin()" class="w-full bg-green-600 text-white p-3 rounded font-bold hover:bg-green-700">Entrar no Painel</button>
         </div>
         <div class="mt-6 text-center space-y-2">
-            <p>Não tem cadastro? <button onclick="goToRegister()" class="text-blue-600 underline font-semibold">Cadastre-se aqui</button></p>
+            <p>Não tem cadastro? <button onclick="goToRegister()" class="text-white bg-blue-600 hover:bg-blue-700 px-4 py-1.5 rounded-full font-bold ml-1 transition shadow-sm hover:shadow">Cadastre-se aqui</button></p>
             <p><button onclick="goToAdmin()" class="text-gray-500 text-sm hover:underline">Acesso Administrativo</button></p>
         </div>
     </section>
@@ -579,9 +818,25 @@
             <strong>Atenção:</strong> Informe seu WhatsApp real para receber avisos e notificações de rateios premiados!
         </div>
         <div class="space-y-4">
-            <input type="text" id="reg-nome" placeholder="Nome Completo" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
-            <input type="text" id="reg-celular" oninput="formatarTelefone(this)" placeholder="Celular WhatsApp (com DDD)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
-            <input type="date" id="reg-data" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+            <div class="space-y-1">
+                <label class="block text-xs font-semibold text-gray-600">Nome Completo:</label>
+                <input type="text" id="reg-nome" placeholder="Nome Completo" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+            </div>
+            
+            <div class="space-y-1">
+                <label class="block text-xs font-semibold text-gray-600">Celular WhatsApp:</label>
+                <input type="text" id="reg-celular" oninput="formatarTelefone(this)" placeholder="Celular WhatsApp (com DDD)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+            </div>
+            
+            <div class="space-y-1">
+                <label class="block text-xs font-semibold text-gray-600">Data de Nascimento (dd/mm/aaaa):</label>
+                <div class="flex gap-2">
+                    <input type="text" id="reg-data-text" placeholder="DD/MM/AAAA" maxlength="10" oninput="formatarDataInput(this)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
+                    <button onclick="abrirCalendario('reg-data-picker')" class="bg-gray-200 hover:bg-gray-300 border p-2 rounded flex items-center justify-center shrink-0 w-11 h-11" title="Selecionar no calendário">📅</button>
+                    <input type="date" id="reg-data-picker" onchange="sincronizarDatePicker(this, 'reg-data-text')" class="w-0 h-0 border-0 opacity-0 absolute">
+                </div>
+            </div>
+            
             <div class="flex justify-between items-center pt-2">
                 <button onclick="goToLogin()" class="text-gray-600 hover:underline">Voltar</button>
                 <button onclick="nextRegisterStep()" class="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700">Avançar</button>
@@ -591,29 +846,46 @@
 
     <!-- SEÇÃO 3: REGISTRO (PLANO) -->
     <section id="sec-register-2" class="hidden">
-        <h2 class="text-xl font-semibold mb-4">Escolha seu Plano Inicial</h2>
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-semibold">Escolha seu Plano Inicial</h2>
+            <button onclick="abrirModalDetalhesPlano()" class="bg-gray-200 hover:bg-gray-300 text-xs font-semibold px-3 py-1.5 rounded flex items-center gap-1">ℹ️ Detalhes dos Valores</button>
+        </div>
         <div class="grid md:grid-cols-2 gap-4">
-            <div class="border-2 rounded-lg p-5 cursor-pointer hover:border-blue-500 hover:shadow-lg transition bg-white flex flex-col" onclick="selectPlan('Padrão')">
-                <h3 class="text-2xl font-bold text-gray-800">Padrão</h3>
-                <p class="text-blue-600 font-bold text-xl mb-3">R$ 28,00 /mês</p>
-                <p class="text-gray-600 mb-4 text-sm">Toda semana uma aposta correndo em seu nome, durante 4 semanas seguidas.</p>
+            <div class="border-2 rounded-lg p-5 cursor-pointer hover:border-blue-500 hover:shadow-lg transition bg-white flex flex-col justify-between" onclick="selectPlan('Padrão')">
+                <div>
+                    <h3 class="text-2xl font-bold text-gray-800">Padrão</h3>
+                    <p class="text-blue-600 font-bold text-xl mb-3">R$ 28,00 /mês</p>
+                    <p class="text-gray-600 text-sm">Toda semana uma aposta correndo em seu nome, durante 4 semanas seguidas.</p>
+                </div>
+                <div class="text-[11px] bg-blue-50 text-blue-700 p-2 rounded mt-4 text-center font-semibold">4 Jogos Totais no Mês</div>
             </div>
-            <div class="border-2 rounded-lg p-5 cursor-pointer hover:border-purple-500 hover:shadow-lg transition bg-white border-purple-100 flex flex-col" onclick="selectPlan('Dobrado')">
-                <h3 class="text-2xl font-bold text-purple-700">Dobrado</h3>
-                <p class="text-purple-600 font-bold text-xl mb-3">R$ 54,00 /mês</p>
-                <p class="text-gray-600 mb-4 text-sm">Toda semana duas apostas correndo em seu nome, durante 4 semanas seguidas.</p>
+            <div class="border-2 rounded-lg p-5 cursor-pointer hover:border-purple-500 hover:shadow-lg transition bg-white border-purple-100 flex flex-col justify-between" onclick="selectPlan('Dobrado')">
+                <div>
+                    <h3 class="text-2xl font-bold text-purple-700">Dobrado</h3>
+                    <p class="text-purple-600 font-bold text-xl mb-3">R$ 54,00 /mês</p>
+                    <p class="text-gray-600 text-sm">Toda semana duas apostas correndo em seu nome, durante 4 semanas seguidas.</p>
+                </div>
+                <div class="text-[11px] bg-purple-50 text-purple-700 p-2 rounded mt-4 text-center font-semibold">8 Jogos Totais no Mês</div>
             </div>
         </div>
         <button onclick="showSection('sec-register-1')" class="mt-6 text-gray-600 hover:underline">← Voltar</button>
     </section>
 
-    <!-- SEÇÃO 4: REGISTRO (TIPO DE APOSTA) -->
-    <section id="sec-register-3" class="hidden">
         <h2 class="text-xl font-semibold mb-4">Como deseja gerar seus jogos?</h2>
-        <select id="reg-tipo" class="w-full p-2 border rounded mb-6 focus:ring-2 focus:ring-green-500" onchange="toggleNumerosSorte()">
-            <option value="Aleatório">Aleatório (O sistema gera de surpresinha automática)</option>
-            <option value="Número da sorte">Número da Sorte (Eu quero escolher minhas dezenas fixas)</option>
-        </select>
+        <input type="hidden" id="reg-tipo" value="Aleatório">
+        
+        <div class="grid md:grid-cols-2 gap-4 mb-6">
+            <div id="card-tipo-aleatorio" class="border-2 border-green-600 bg-green-50 rounded-lg p-4 cursor-pointer hover:shadow transition flex flex-col items-center text-center" onclick="selecionarTipoApostaReg('Aleatório')">
+                <span class="text-3xl mb-1">🎲</span>
+                <h4 class="font-bold text-gray-800 text-sm">Modo Aleatório</h4>
+                <p class="text-[11px] text-gray-500 mt-1">Surpresinha semanal: o sistema gera dezenas automáticas para você a cada rodada.</p>
+            </div>
+            <div id="card-tipo-fixo" class="border-2 border-gray-200 rounded-lg p-4 cursor-pointer hover:border-blue-500 hover:shadow transition flex flex-col items-center text-center" onclick="selecionarTipoApostaReg('Número da sorte')">
+                <span class="text-3xl mb-1">🎯</span>
+                <h4 class="font-bold text-gray-800 text-sm">Números da Sorte</h4>
+                <p class="text-[11px] text-gray-500 mt-1">Jogos Fixos: você define suas 6 dezenas e elas são apostadas em todas as rodadas.</p>
+            </div>
+        </div>
 
         <div id="numeros-sorte-container" class="hidden bg-gray-50 p-4 border rounded mb-6">
             <div class="mb-6">
@@ -641,9 +913,9 @@
             </div>
         </div>
 
-        <div class="flex justify-between">
+        <div class="flex justify-between mt-6">
             <button onclick="showSection('sec-register-2')" class="text-gray-600 hover:underline">Voltar</button>
-            <button onclick="finishRegister()" class="bg-green-600 text-white px-6 py-2 rounded font-bold hover:bg-green-700">Finalizar Cadastro</button>
+            <button id="btn-finish-register" onclick="finishRegister()" class="bg-green-600 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-green-700 shadow">Finalizar Cadastro</button>
         </div>
     </section>
 
@@ -656,17 +928,39 @@
 
         <div class="grid md:grid-cols-3 gap-4 mb-6">
             <!-- DADOS DO PLANO -->
-            <div class="bg-white border rounded-xl p-4 shadow-sm md:col-span-2 space-y-2">
-                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider border-b pb-1">Seu Plano Vigente</h3>
-                <p class="text-sm"><strong>Plano Atual:</strong> <span id="dash-plano" class="font-medium"></span></p>
-                <p class="text-sm"><strong>Tipo de Processamento:</strong> <span id="dash-tipo" class="font-medium"></span></p>
-                <p class="text-sm"><strong>Créditos Restantes:</strong> <span id="dash-apostas" class="font-bold text-blue-600 text-base"></span> rodadas</p>
-                <p class="text-xs text-purple-700"><strong>Agendado Próximo Ciclo:</strong> <span id="dash-futuro" class="font-bold"></span></p>
-                
+            <div class="bg-white border rounded-xl p-4 shadow-sm space-y-2 flex flex-col justify-between">
+                <div>
+                    <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider border-b pb-1">Seu Plano Vigente</h3>
+                    <p class="text-sm"><strong>Plano Atual:</strong> <span id="dash-plano" class="font-medium"></span></p>
+                    <p class="text-sm"><strong>Tipo de Processamento:</strong> <span id="dash-tipo" class="font-medium"></span></p>
+                    <p class="text-sm"><strong>Créditos Restantes:</strong> <span id="dash-apostas" class="font-bold text-blue-600 text-base"></span> rodadas</p>
+                    <p class="text-xs text-purple-700"><strong>Agendado Próximo Ciclo:</strong> <span id="dash-futuro" class="font-bold"></span></p>
+                    
+                    <div id="aviso-recarga" class="hidden mt-2 bg-red-50 border border-red-200 text-red-700 p-2 rounded text-xs font-semibold leading-relaxed animate-pulse">
+                        ⚠️ <strong>Última rodada restante!</strong> Efetue o pagamento PIX e avise o admin para recarregar seus créditos e continuar participando.
+                    </div>
+                </div>
+
                 <!-- CONTAINER FORMATADO DAS BOLINHAS VERDES -->
-                <div class="pt-2">
-                    <strong class="text-sm text-gray-700 block mb-1">Seus Números Cadastrados:</strong>
+                <div class="pt-2 border-t mt-2">
+                    <strong class="text-xs text-gray-700 block mb-1">Seus Números Cadastrados:</strong>
                     <div id="dash-jogos-container" class="space-y-2"></div>
+                </div>
+            </div>
+
+            <!-- SORTEIO ATUAL -->
+            <div class="bg-white border rounded-xl p-4 shadow-sm flex flex-col justify-between">
+                <div>
+                    <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider border-b pb-1">🏆 Sorteio Atual</h3>
+                    <p class="text-sm mt-1"><strong>Prêmio Estimado:</strong> <span id="dash-sorteio-premio" class="font-bold text-green-700"></span></p>
+                    <p class="text-sm"><strong>Data do Sorteio:</strong> <span id="dash-sorteio-data" class="font-medium"></span></p>
+                    
+                    <div class="mt-3 border-t pt-2">
+                        <strong class="text-xs text-gray-600 block mb-1">Seus Jogos nesta Rodada:</strong>
+                        <div id="dash-sorteio-jogos-container" class="space-y-2">
+                            <!-- Populated dynamically or showing "Aguardando cadastro dos jogos" -->
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -747,14 +1041,30 @@
             </div>
         </div>
 
+        <!-- COMPARTILHAR BOLÃO -->
+        <div class="bg-gradient-to-r from-blue-600 to-indigo-500 rounded-xl p-4 mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm text-white">
+            <div>
+                <p class="font-bold text-sm">🤝 Compartilhar Bolão com Amigos</p>
+                <p class="text-xs text-blue-100 mt-0.5">Convide mais pessoas para participar do bolão e aumentar as chances do grupo!</p>
+            </div>
+            <div class="flex gap-2 w-full md:w-auto">
+                <button onclick="compartilharBolao('whatsapp')" class="flex-1 md:flex-initial bg-green-500 text-white font-bold text-xs px-4 py-2.5 rounded-lg shadow hover:bg-green-600 transition flex items-center justify-center gap-1.5">
+                    📱 WhatsApp
+                </button>
+                <button onclick="compartilharBolao('link')" class="flex-1 md:flex-initial bg-white text-indigo-700 font-bold text-xs px-4 py-2.5 rounded-lg shadow hover:bg-gray-100 transition flex items-center justify-center gap-1.5">
+                    🔗 Copiar Link
+                </button>
+            </div>
+        </div>
+
         <div class="grid md:grid-cols-3 gap-4 border-t pt-4">
             <div class="space-y-2 md:col-span-1">
                 <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Últimas Recargas (Max 4)</h3>
                 <div id="hist-pagamentos-list" class="space-y-2"></div>
             </div>
             <div class="space-y-3 md:col-span-2">
-                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Mural dos Últimos Sorteios</h3>
-                <div id="hist-sorteios-container" class="space-y-3 max-h-96 overflow-y-auto pr-1"></div>
+                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Mural dos Últimos Sorteios (Minimizado)</h3>
+                <div id="hist-sorteios-container" class="space-y-2 max-h-[450px] overflow-y-auto pr-1"></div>
             </div>
         </div>
     </section>
@@ -784,12 +1094,22 @@
             </div>
         </div>
 
-        <div class="bg-blue-50 border border-blue-200 p-4 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div>
-                <h3 class="font-bold text-blue-900 text-sm uppercase tracking-wider">1. Processamento Semanal</h3>
-                <p class="text-xs text-blue-800 mt-0.5">Gera as surpresinhas e debita créditos ativos.</p>
+        <div class="bg-blue-50 border border-blue-200 p-4 rounded-xl space-y-4 shadow-sm">
+            <h3 class="font-bold text-blue-900 text-sm uppercase tracking-wider">1. Processamento Semanal & Configuração do Sorteio Atual</h3>
+            <div class="grid md:grid-cols-2 gap-3 text-sm">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 mb-1">Valor Estimado do Prêmio Atual (R$):</label>
+                    <input type="text" id="adm-sorteio-premio-val" placeholder="Ex: 45.000.000,00" class="p-2 border rounded w-full focus:outline-none focus:ring-1 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 mb-1">Data e Hora Oficial do Sorteio:</label>
+                    <input type="text" id="adm-sorteio-data-val" placeholder="Ex: Quinta 10/10/2026 às 20h" class="p-2 border rounded w-full focus:outline-none focus:ring-1 focus:ring-blue-500">
+                </div>
             </div>
-            <button onclick="fazerApostaGeral()" class="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold shadow-md hover:bg-blue-700 text-sm">Gerar Rodada Semanal</button>
+            <div class="flex flex-wrap gap-2 pt-2 justify-between items-center">
+                <button onclick="salvarInformacoesSorteio()" class="bg-blue-800 text-white px-4 py-2 rounded font-bold hover:bg-blue-900 text-xs shadow">💾 Salvar Configurações do Sorteio</button>
+                <button onclick="fazerApostaGeral()" class="bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700 text-xs shadow flex items-center gap-1">🎲 Gerar Rodada Semanal</button>
+            </div>
         </div>
 
         <!-- REESTRUTURAÇÃO: APURAÇÃO EM DUAS ETAPAS SOLICITADA -->
@@ -823,8 +1143,14 @@
 
         <!-- LISTA GERAL DE PARTICIPANTES -->
         <div class="space-y-2">
-            <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Participantes Cadastrados</h3>
-            <div class="overflow-x-auto rounded-xl border border-gray-200">
+            <div class="flex justify-between items-center">
+                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Participantes Cadastrados</h3>
+                <label class="flex items-center gap-1.5 text-xs text-gray-700 font-medium cursor-pointer bg-white px-3 py-1.5 border rounded-lg shadow-sm">
+                    <input type="checkbox" id="filtro-apenas-ativos" checked onchange="renderizarTabelaParticipantes()" class="rounded border-gray-300 text-green-600 focus:ring-green-500">
+                    Mostrar Apenas Ativos
+                </label>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
                 <table class="w-full bg-white text-left border-collapse">
                     <thead>
                         <tr class="bg-gray-100 text-gray-700 border-b border-gray-200 text-xs uppercase font-bold">
@@ -833,7 +1159,7 @@
                             <th class="p-3">Jogos Fixos</th>
                             <th class="p-3">Chave PIX</th>
                             <th class="p-3">Saldo Créditos</th>
-                            <th class="p-3 text-center">Ações</th>
+                            <th class="p-3 text-center">Status / Ações</th>
                         </tr>
                     </thead>
                     <tbody id="admin-table-body" class="divide-y divide-gray-100"></tbody>
@@ -869,6 +1195,37 @@
         <button onclick="fecharModalRateio()" class="w-full bg-gray-800 text-white font-bold py-2.5 rounded-lg shadow hover:bg-gray-900 transition text-sm">Fechar Relatório</button>
     </div>
 </div>
+
+<!-- MODAL DETALHES DO PLANO -->
+<div id="modal-detalhes-plano" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 space-y-4">
+        <h3 class="text-lg font-bold text-gray-800 border-b pb-2">ℹ️ Detalhes dos Planos</h3>
+        <p class="text-sm text-gray-600 leading-relaxed">
+            O valor cobrado nos planos é referente ao valor de custo oficial de cada jogo (R$ 6,00 por aposta na Mega Sena) mais uma taxa de serviço.
+        </p>
+        <p class="text-sm text-gray-600 leading-relaxed font-semibold">
+            Esta taxa serve especificamente para administrar a infraestrutura técnica e manter o sistema do bolão sempre ativo e atualizado.
+        </p>
+        <button onclick="fecharModalDetalhesPlano()" class="w-full bg-blue-600 text-white font-bold py-2 rounded-lg text-sm hover:bg-blue-700 transition">Entendi</button>
+    </div>
+</div>
+
+<!-- COMPARTILHAR BOLÃO LOGIC -->
+<script>
+    function compartilharBolao(opcao) {
+        const mensagem = "Oi, estou participando desse bolão mensal, que tal participar para aumentar nossas chances https://leonardosilva-ti.github.io/bolaovidanova/";
+        if (opcao === 'whatsapp') {
+            const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(mensagem)}`;
+            window.open(url, '_blank');
+        } else {
+            navigator.clipboard.writeText(mensagem).then(() => {
+                alert("Mensagem de convite copiada com sucesso!");
+            }).catch(() => {
+                alert("Erro ao copiar o link. Compartilhe: https://leonardosilva-ti.github.io/bolaovidanova/");
+            });
+        }
+    }
+</script>
 
 </body>
 </html>
