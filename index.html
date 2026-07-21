@@ -684,10 +684,16 @@
         alert(res.message);
     }
 
-
+    async function fazerApostaGeral() {
+        if(confirm("Deseja gerar e consolidar a rodada de jogos de todos os usuários com créditos ativos?")) {
+            const res = await apiCall("fazerAposta", { token: adminToken });
+            alert(res.message);
+            loadAdminData();
+        }
+    }
 
     // PROCESSO DE APURAÇÃO EM 2 ETAPAS (NOVO)
-    async function ejecutarEtapa1Conferencia() {
+    async function executarEtapa1Conferencia() {
         const idSorteio = document.getElementById('adm-concurso-id').value;
         const dezenas = document.getElementById('adm-dezenas-sorteadas').value;
 
@@ -711,7 +717,7 @@
         }
     }
 
-    async function ejecutarEtapa2Rateio() {
+    async function executarEtapa2Rateio() {
         const idSorteio = document.getElementById('adm-concurso-id').value;
         const dezenas = document.getElementById('adm-dezenas-sorteadas').value;
         const premioTotal = document.getElementById('adm-premio-total').value;
