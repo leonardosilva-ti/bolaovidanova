@@ -438,6 +438,7 @@
     async function carregarHistoricosPainel() {
         const res = await apiCall("getParticipantHistory", { celular: userSession.celular });
         if(res.success) {
+            // --- ÚLTIMAS RECARGAS ---
             const areaPagamentos = document.getElementById('hist-pagamentos-list');
             areaPagamentos.innerHTML = "";
             if(res.pagamentos.length === 0) {
@@ -453,7 +454,7 @@
                 });
             }
 
-            // Sorteio Atual Card Update
+            // --- SORTEIO ATUAL ---
             const pPremio = document.getElementById('dash-sorteio-premio');
             const pData = document.getElementById('dash-sorteio-data');
             const pJogosCont = document.getElementById('dash-sorteio-jogos-container');
@@ -461,39 +462,31 @@
             pPremio.innerText = weeklyInfoAtual.premio ? "R$ " + weeklyInfoAtual.premio : "A definir";
             pData.innerText = weeklyInfoAtual.dataHora ? weeklyInfoAtual.dataHora : "Aguardando definição";
             
-            // Procura rodada ativa em minhasApostas (que não está finalizada em res.sorteios)
-            let activeRoundId = null;
-            for (let idSort in res.minhasApostas) {
-                const isFinalized = res.sorteios.some(s => s.idSorteio === idSort);
-                if (!isFinalized) {
-                    activeRoundId = idSort;
-                    break;
-                }
-            }
-            
-            if (activeRoundId && res.minhasApostas[activeRoundId]) {
-                const apostas = res.minhasApostas[activeRoundId];
+            // Jogos do participante na rodada atual (vindos direto do backend)
+            const jogosSorteioAtual = res.jogosSorteioAtual || [];
+            if (jogosSorteioAtual.length > 0) {
+                // Cada item em jogosSorteioAtual pode ter " | " separando 2 jogos (plano dobrado)
                 let allGames = [];
-                apostas.forEach(ap => {
-                    if (ap.jogos) {
-                        const splitGames = ap.jogos.split(" | ");
-                        allGames.push(...splitGames);
-                    }
+                jogosSorteioAtual.forEach(linha => {
+                    linha.split(" | ").forEach(g => { if(g.trim()) allGames.push(g.trim()); });
                 });
-                
+
                 if (allGames.length > 0) {
-                    let gamesListHtml = allGames.map((g, idx) => `
-                        <div class="bg-gray-50 border rounded p-1 font-mono text-[11px] text-gray-700">
-                            Jogo ${idx + 1}: ${g}
-                        </div>
-                    `).join("");
-                    
+                    const gamesListHtml = allGames.map((g, idx) => {
+                        const dezenas = g.split(",").map(d => d.trim());
+                        const bolinhas = dezenas.map(n => `<span class="inline-flex w-7 h-7 items-center justify-center bg-green-600 text-white rounded-full text-xs font-bold font-mono">${n}</span>`).join(" ");
+                        return `<div class="bg-white border rounded p-2">
+                            <span class="text-[10px] font-bold text-green-800 uppercase tracking-wide block mb-1">Jogo ${idx + 1}</span>
+                            <div class="flex flex-wrap gap-1">${bolinhas}</div>
+                        </div>`;
+                    }).join("");
+
                     pJogosCont.innerHTML = `
                         <details class="group cursor-pointer">
                             <summary class="text-xs text-blue-600 font-bold hover:underline select-none">
-                                Ver meus ${allGames.length} jogo(s) na rodada
+                                Ver meus ${allGames.length} jogo(s) desta rodada ▾
                             </summary>
-                            <div class="mt-2 space-y-1 bg-gray-50 p-2 rounded border transition-all">
+                            <div class="mt-2 space-y-2 transition-all">
                                 ${gamesListHtml}
                             </div>
                         </details>
@@ -505,14 +498,20 @@
                 pJogosCont.innerHTML = `<span class="text-xs text-gray-400 italic">Aguardando cadastro dos jogos</span>`;
             }
 
+            // --- MURAL DOS ÚLTIMOS SORTEIOS ---
             const areaSorteios = document.getElementById('hist-sorteios-container');
             areaSorteios.innerHTML = "";
             if(res.sorteios.length === 0) {
                 areaSorteios.innerHTML = `<p class="text-sm text-gray-500 text-center py-4">Nenhum sorteio registrado no sistema.</p>`;
             } else {
-                const minhasApostas = res.minhasApostas || {};
+                // apostasDetalhe é o nome correto do campo retornado pelo backend
+                const apostasDetalhe = res.apostasDetalhe || {};
+                const targetCel = String(userSession.celular).replace(/\D/g, "");
+
                 res.sorteios.forEach((s, idx) => {
-                    const minhas = minhasApostas[s.idSorteio] || [];
+                    // Filtra apenas apostas do próprio participante nesse sorteio
+                    const todasApostas = apostasDetalhe[s.idSorteio] || [];
+                    const minhas = todasApostas.filter(ap => String(ap.celular).replace(/\D/g, "") === targetCel);
                     const houvePremiacao = Number(s.premioTotal) > 0;
 
                     // Extrair data do ID (formato SORT-AAAAMMDD-HHmm)
@@ -520,7 +519,7 @@
                     const match = s.idSorteio.match(/(\d{4})(\d{2})(\d{2})/);
                     if (match) dataExibir = `${match[3]}/${match[2]}/${match[1]}`;
 
-                    // Meu melhor jogo nessa rodada
+                    // Melhor jogo e premiação do participante
                     let melhorAcertos = -1;
                     let melhorJogo = "";
                     let jogoPremiadoHtml = "";
@@ -871,6 +870,8 @@
         <button onclick="showSection('sec-register-1')" class="mt-6 text-gray-600 hover:underline">← Voltar</button>
     </section>
 
+    <!-- SEÇÃO 4: REGISTRO (TIPO DE APOSTA) -->
+    <section id="sec-register-3" class="hidden">
         <h2 class="text-xl font-semibold mb-4">Como deseja gerar seus jogos?</h2>
         <input type="hidden" id="reg-tipo" value="Aleatório">
         
