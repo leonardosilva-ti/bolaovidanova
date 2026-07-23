@@ -454,12 +454,16 @@
                 });
             }
 
-            // --- SORTEIO ATUAL ---
+            // Sorteio Atual Card Update
             const pPremio = document.getElementById('dash-sorteio-premio');
             const pData = document.getElementById('dash-sorteio-data');
             const pJogosCont = document.getElementById('dash-sorteio-jogos-container');
             
-            pPremio.innerText = weeklyInfoAtual.premio ? "R$ " + weeklyInfoAtual.premio : "A definir";
+            let premioVal = weeklyInfoAtual.premio;
+            if (premioVal && !isNaN(Number(premioVal))) {
+                premioVal = Number(premioVal).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            }
+            pPremio.innerText = premioVal ? "R$ " + premioVal : "A definir";
             pData.innerText = weeklyInfoAtual.dataHora ? weeklyInfoAtual.dataHora : "Aguardando definição";
             
             // Jogos do participante na rodada atual (vindos direto do backend)
@@ -645,7 +649,7 @@
                             <option value="Ativo" ${selectedAtivo}>Ativo</option>
                             <option value="Inativo" ${selectedInativo}>Inativo</option>
                         </select>
-                        <button onclick="registrarPagamento('${p.celular}')" class="bg-green-500 text-white px-2.5 py-1 rounded text-xs font-bold hover:bg-green-600 shadow transition">Validar +4 Crét.</button>
+                        <button onclick="registrarPagamento('${p.celular}')" class="bg-green-500 text-white px-2.5 py-1 rounded text-xs font-bold hover:bg-green-600 shadow transition">Validar +${p.plano === 'Avulso' ? '1' : '4'} Créd.</button>
                     </td>
                 </tr>
             `;
@@ -855,7 +859,15 @@
             <h2 class="text-xl font-semibold">Escolha seu Plano Inicial</h2>
             <button onclick="abrirModalDetalhesPlano()" class="bg-gray-200 hover:bg-gray-300 text-xs font-semibold px-3 py-1.5 rounded flex items-center gap-1">ℹ️ Detalhes dos Valores</button>
         </div>
-        <div class="grid md:grid-cols-2 gap-4">
+        <div class="grid md:grid-cols-3 gap-4">
+            <div class="border-2 rounded-lg p-5 cursor-pointer hover:border-green-500 hover:shadow-lg transition bg-white border-green-50 flex flex-col justify-between" onclick="selectPlan('Avulso')">
+                <div>
+                    <h3 class="text-2xl font-bold text-green-700">Avulso</h3>
+                    <p class="text-green-600 font-bold text-xl mb-3">R$ 7,25 /jogo</p>
+                    <p class="text-gray-600 text-sm">Carregue e jogue na próxima rodada. Sem fidelidade semanal.</p>
+                </div>
+                <div class="text-[11px] bg-green-50 text-green-700 p-2 rounded mt-4 text-center font-semibold">1 Jogo (1 Sorteio)</div>
+            </div>
             <div class="border-2 rounded-lg p-5 cursor-pointer hover:border-blue-500 hover:shadow-lg transition bg-white flex flex-col justify-between" onclick="selectPlan('Padrão')">
                 <div>
                     <h3 class="text-2xl font-bold text-gray-800">Padrão</h3>
@@ -975,7 +987,7 @@
             <div class="bg-gradient-to-br from-green-50 to-emerald-100 border border-green-200 rounded-xl p-4 flex flex-col justify-between shadow-sm">
                 <div>
                     <h4 class="font-bold text-green-900 text-sm uppercase tracking-wider">Renovação / Créditos</h4>
-                    <p class="text-xs text-green-800 mt-1">Transfira o valor do plano e avise o administrador para liberar mais +4 rodadas acumalativas.</p>
+                    <p class="text-xs text-green-800 mt-1">Transfira o valor do seu plano e avise o administrador para liberar mais rodadas cumulativas.</p>
                     
                     <!-- CAMPO DA CHAVE PIX REQUISITADA -->
                     <div class="mt-3 bg-white p-2 rounded-lg border border-green-200 shadow-sm">
@@ -1031,6 +1043,7 @@
                     <h3 class="font-bold text-gray-800 text-sm mb-1">Alterar Plano para o Próximo Ciclo</h3>
                     <select id="dash-next-plano" class="w-full p-2 text-sm border rounded bg-white">
                         <option value="">Manter o mesmo plano atual</option>
+                        <option value="Avulso">Mudar para Plano Avulso (R$ 7,25)</option>
                         <option value="Padrão">Mudar para Plano Padrão (R$ 28,00)</option>
                         <option value="Dobrado">Mudar para Plano Dobrado (R$ 54,00)</option>
                     </select>
