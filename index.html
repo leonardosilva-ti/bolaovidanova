@@ -553,6 +553,39 @@
                             <span class="ml-1 bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-bold">${melhorAcertos} acerto(s)</span>
                         </div>` : `<div class="mt-2 text-xs text-gray-400 italic">Você não participou dessa rodada.</div>`;
 
+                    // Jogos de TODOS os participantes (apenas os números)
+                    let todosJogosRodadaHtml = "";
+                    if (todasApostas && todasApostas.length > 0) {
+                        let allGamesRound = [];
+                        todasApostas.forEach(ap => {
+                            if (ap.jogos) {
+                                // Para cada aposta (pode ter 2 jogos se dobrado), extrair dezenas e acertos juntos
+                                const jogosSep = ap.jogos.split(" | ");
+                                const acertosSep = ap.acertos ? String(ap.acertos).match(/(\d+) acertos/g) : null;
+                                
+                                jogosSep.forEach((g, i) => {
+                                    if (g.trim()) {
+                                        let hitText = (acertosSep && acertosSep[i]) ? ` (${acertosSep[i].split(" ")[0]})` : "";
+                                        allGamesRound.push(g.trim() + hitText);
+                                    }
+                                });
+                            }
+                        });
+                        if (allGamesRound.length > 0) {
+                            todosJogosRodadaHtml = `
+                            <div class="mt-2 border-t pt-2">
+                                <details class="group cursor-pointer">
+                                    <summary class="text-xs text-blue-600 font-bold hover:underline select-none">
+                                        + Ver todos os ${allGamesRound.length} jogos desta rodada ▾
+                                    </summary>
+                                    <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-40 overflow-y-auto pr-1">
+                                        ${allGamesRound.map(g => `<div class="font-mono text-[10px] text-gray-600 bg-gray-100 border border-gray-200 rounded px-1.5 py-1 text-center">${g}</div>`).join('')}
+                                    </div>
+                                </details>
+                            </div>`;
+                        }
+                    }
+
                     const detailId = `detalhe-sorteio-${idx}`;
 
                     areaSorteios.innerHTML += `
@@ -582,6 +615,7 @@
                                     <p class="text-[10px] uppercase font-bold text-gray-400 mb-1">Seus jogos nesta rodada:</p>
                                     ${minhas.map(ap => `<div class="font-mono text-xs text-gray-700 bg-gray-50 rounded px-2 py-1">${ap.jogos} &nbsp;<span class="text-blue-600">(${ap.acertos})</span></div>`).join('')}
                                 </div>` : ''}
+                                ${todosJogosRodadaHtml}
                             </div>
                         </div>
                     `;
