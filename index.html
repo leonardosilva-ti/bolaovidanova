@@ -103,8 +103,39 @@
         return dataStr;
     }
 
+    let lastClickedButton = null;
+    let clickTimeout = null;
+    document.addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (btn) {
+            lastClickedButton = btn;
+            clearTimeout(clickTimeout);
+            clickTimeout = setTimeout(() => { lastClickedButton = null; }, 100);
+        }
+    }, true);
+
     async function apiCall(action, payload = {}) {
-        document.getElementById('loading').classList.remove('hidden');
+        const globalLoader = document.getElementById('loading');
+        let inlineLoader = null;
+        let btnUsed = lastClickedButton;
+        
+        if (btnUsed) {
+            inlineLoader = btnUsed.nextElementSibling;
+            if (!inlineLoader || !inlineLoader.classList.contains('inline-loader')) {
+                inlineLoader = document.createElement('div');
+                inlineLoader.className = 'inline-loader text-center text-blue-600 font-bold mt-2 animate-pulse text-xs';
+                inlineLoader.innerHTML = '⚙️ Processando comando no servidor, aguarde...';
+                btnUsed.parentNode.insertBefore(inlineLoader, btnUsed.nextSibling);
+            }
+            inlineLoader.classList.remove('hidden');
+            globalLoader.classList.add('hidden');
+            
+            btnUsed.disabled = true;
+            btnUsed.classList.add('opacity-50', 'cursor-not-allowed');
+        } else {
+            globalLoader.classList.remove('hidden');
+        }
+
         payload.action = action;
         try {
             const response = await fetch(APPS_SCRIPT_URL, {
@@ -113,10 +144,23 @@
                 headers: { "Content-Type": "text/plain" }
             });
             const data = await response.json();
-            document.getElementById('loading').classList.add('hidden');
+            
+            if (inlineLoader) inlineLoader.classList.add('hidden');
+            if (btnUsed) {
+                btnUsed.disabled = false;
+                btnUsed.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+            globalLoader.classList.add('hidden');
+            
             return data;
         } catch (error) {
-            document.getElementById('loading').classList.add('hidden');
+            if (inlineLoader) inlineLoader.classList.add('hidden');
+            if (btnUsed) {
+                btnUsed.disabled = false;
+                btnUsed.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+            globalLoader.classList.add('hidden');
+            
             alert("Erro de comunicação com o servidor.");
             return { success: false };
         }
