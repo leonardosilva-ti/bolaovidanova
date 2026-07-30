@@ -546,27 +546,30 @@
                 pJogosCont.innerHTML = `<span class="text-xs text-gray-400 italic">Aguardando cadastro dos jogos</span>`;
             }
 
-            // Jogos de TODOS os participantes na rodada atual
+            // Jogos de TODOS os outros participantes na rodada atual
             const pTodosJogosCont = document.getElementById('container-todos-jogos-sorteio');
             if (pTodosJogosCont) {
                 const todosJogos = res.todosJogosSorteioAtual || [];
                 if (todosJogos.length > 0) {
                     let todosHtml = "";
-                    todosJogos.forEach(tj => {
-                        let games = [];
-                        tj.jogos.split(" | ").forEach(g => { if(g.trim()) games.push(g.trim()); });
-                        if (games.length > 0) {
-                            todosHtml += `<div class="bg-gray-50 border rounded p-2 mb-2">
-                                <span class="text-xs font-bold text-gray-700 block mb-1">👤 ${tj.nome}</span>`;
-                            games.forEach((g, idx) => {
-                                const dezenas = g.split(",").map(d => d.trim());
-                                const bolinhas = dezenas.map(n => `<span class="inline-flex w-6 h-6 items-center justify-center bg-green-500 text-white rounded-full text-[10px] font-bold font-mono">${n}</span>`).join(" ");
-                                todosHtml += `<div class="flex flex-wrap gap-1 mt-1">${bolinhas}</div>`;
-                            });
-                            todosHtml += `</div>`;
-                        }
+                    let allOtherGames = [];
+                    todosJogos.forEach(linha => {
+                        linha.split(" | ").forEach(g => { if(g.trim()) allOtherGames.push(g.trim()); });
                     });
-                    pTodosJogosCont.innerHTML = todosHtml;
+                    
+                    if (allOtherGames.length > 0) {
+                        allOtherGames.forEach((g, idx) => {
+                            const dezenas = g.split(",").map(d => d.trim());
+                            const bolinhas = dezenas.map(n => `<span class="inline-flex w-6 h-6 items-center justify-center bg-gray-500 text-white rounded-full text-[10px] font-bold font-mono">${n}</span>`).join(" ");
+                            todosHtml += `<div class="bg-gray-50 border rounded p-2 mb-2">
+                                <span class="text-[10px] font-bold text-gray-600 uppercase tracking-wide block mb-1">Jogo ${idx + 1}</span>
+                                <div class="flex flex-wrap gap-1">${bolinhas}</div>
+                            </div>`;
+                        });
+                        pTodosJogosCont.innerHTML = todosHtml;
+                    } else {
+                        pTodosJogosCont.innerHTML = `<span class="text-xs text-gray-400 italic">Nenhum jogo cadastrado nesta rodada.</span>`;
+                    }
                 } else {
                     pTodosJogosCont.innerHTML = `<span class="text-xs text-gray-400 italic">Nenhum jogo cadastrado nesta rodada.</span>`;
                 }
