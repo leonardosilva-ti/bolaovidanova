@@ -1,0 +1,15 @@
+{
+  "name": "Bolão Mega Sena",
+  "short_name": "Bolão",
+  "description": "Gestão do bolão mensal da Mega Sena",
+  "lang": "pt-BR",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f5f2",
+  "theme_color": "#15803d",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "https://cdn-icons-png.flaticon.com/512/1055/1055661.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

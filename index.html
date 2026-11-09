@@ -1,1471 +1,547 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bolão Mega Sena</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        .hidden { display: none !important; }
-        .fade-in { animation: fadeIn 0.3s ease-in-out; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-        input[type=number] { -moz-appearance: textfield; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Bolão Mega Sena</title>
+  <meta name="description" content="Gestão do bolão mensal da Mega Sena: cadastro, créditos, jogos e resultados.">
+  <meta name="theme-color" content="#15803d">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/1055/1055661.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="css/styles.css">
+  <script type="module" src="js/main.js"></script>
 </head>
-<body class="bg-gray-100 text-gray-800 font-sans p-4 md:p-10">
-
-<script>
-    // ====== CONFIGURAÇÃO ======
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzH06I0XCBUbhbQCaSVdVdRZ0DCi8-oYd2TH36W7fIilOAMYvy3if11uQtFXPOhBKmUOQ/exec"; 
-    // ==========================
-
-    let currentData = {}; 
-    let adminToken = "";
-    let userSession = {};
-    let chavePixAtual = "Não configurada";
-    let weeklyInfoAtual = { premio: "", dataHora: "" };
-    let listaParticipantesGlob = [];
-
-    function abrirCalendario(pickerId) {
-        const picker = document.getElementById(pickerId);
-        if (picker && typeof picker.showPicker === 'function') {
-            picker.showPicker();
-        } else if (picker) {
-            picker.click();
-        }
-    }
-
-    function sincronizarDatePicker(picker, textId) {
-        if (!picker.value) return;
-        const parts = picker.value.split("-"); // yyyy-mm-dd
-        if (parts.length === 3) {
-            document.getElementById(textId).value = `${parts[2]}/${parts[1]}/${parts[0]}`;
-        }
-    }
-
-    function obterDataFormatadaAPI(dataStr) {
-        const val = dataStr.trim();
-        if (val.includes("/")) {
-            const parts = val.split("/");
-            if (parts.length === 3) {
-                return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-            }
-        }
-        return val;
-    }
-
-    function formatarDataInput(input) {
-        let value = input.value.replace(/\D/g, "");
-        if (value.length > 8) value = value.slice(0, 8);
-        if (value.length > 4) {
-            input.value = `${value.slice(0, 2)}/${value.slice(2, 4)}/${value.slice(4)}`;
-        } else if (value.length > 2) {
-            input.value = `${value.slice(0, 2)}/${value.slice(2)}`;
-        } else {
-            input.value = value;
-        }
-    }
-
-    function formatarTelefone(input) {
-        let value = input.value.replace(/\D/g, "");
-        if (value.length > 11) value = value.slice(0, 11);
-        if (value.length > 10) {
-            input.value = `(${value.slice(0, 2)}) ${value.slice(2, 7)}-${value.slice(7)}`;
-        } else if (value.length > 6) {
-            input.value = `(${value.slice(0, 2)}) ${value.slice(2, 6)}-${value.slice(6)}`;
-        } else if (value.length > 2) {
-            input.value = `(${value.slice(0, 2)}) ${value.slice(2)}`;
-        } else if (value.length > 0) {
-            input.value = `(${value.slice(0, 2)}`;
-        } else {
-            input.value = "";
-        }
-    }
-
-    function formatarDataHora(dataStr) {
-        if (!dataStr) return "";
-        try {
-            const partes = String(dataStr).split(" ");
-            if (partes.length === 2) {
-                const data = partes[0];
-                const horaMinSec = partes[1].split(":");
-                if (horaMinSec.length >= 2) {
-                    return `${data} ${horaMinSec[0]}:${horaMinSec[1]}`;
-                }
-            }
-            const d = new Date(dataStr);
-            if (!isNaN(d.getTime())) {
-                const pad = (n) => String(n).padStart(2, '0');
-                return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-            }
-        } catch (e) {}
-        return dataStr;
-    }
-
-    let lastClickedButton = null;
-    let clickTimeout = null;
-    document.addEventListener('click', (e) => {
-        const btn = e.target.closest('button');
-        if (btn) {
-            lastClickedButton = btn;
-            clearTimeout(clickTimeout);
-            clickTimeout = setTimeout(() => { lastClickedButton = null; }, 100);
-        }
-    }, true);
-
-    async function apiCall(action, payload = {}) {
-        const globalLoader = document.getElementById('loading');
-        let inlineLoader = null;
-        let btnUsed = lastClickedButton;
-        
-        if (btnUsed) {
-            inlineLoader = btnUsed.nextElementSibling;
-            if (!inlineLoader || !inlineLoader.classList.contains('inline-loader')) {
-                inlineLoader = document.createElement('div');
-                inlineLoader.className = 'inline-loader text-center text-blue-600 font-bold mt-2 animate-pulse text-xs';
-                inlineLoader.innerHTML = '⚙️ Processando comando no servidor, aguarde...';
-                btnUsed.parentNode.insertBefore(inlineLoader, btnUsed.nextSibling);
-            }
-            inlineLoader.classList.remove('hidden');
-            globalLoader.classList.add('hidden');
-            
-            btnUsed.disabled = true;
-            btnUsed.classList.add('opacity-50', 'cursor-not-allowed');
-        } else {
-            globalLoader.classList.remove('hidden');
-        }
-
-        payload.action = action;
-        try {
-            const response = await fetch(APPS_SCRIPT_URL, {
-                method: "POST",
-                body: JSON.stringify(payload),
-                headers: { "Content-Type": "text/plain" }
-            });
-            const data = await response.json();
-            
-            if (inlineLoader) inlineLoader.classList.add('hidden');
-            if (btnUsed) {
-                btnUsed.disabled = false;
-                btnUsed.classList.remove('opacity-50', 'cursor-not-allowed');
-            }
-            globalLoader.classList.add('hidden');
-            
-            return data;
-        } catch (error) {
-            if (inlineLoader) inlineLoader.classList.add('hidden');
-            if (btnUsed) {
-                btnUsed.disabled = false;
-                btnUsed.classList.remove('opacity-50', 'cursor-not-allowed');
-            }
-            globalLoader.classList.add('hidden');
-            
-            alert("Erro de comunicação com o servidor.");
-            return { success: false };
-        }
-    }
-
-    function showSection(id) {
-        document.querySelectorAll('section').forEach(s => s.classList.add('hidden'));
-        document.getElementById(id).classList.remove('hidden');
-        document.getElementById(id).classList.add('fade-in');
-    }
-
-    function goToRegister() { showSection('sec-register-1'); }
-    function goToLogin() { showSection('sec-login'); }
-    function goToAdmin() { showSection('sec-admin-login'); }
-
-    // RENDERIZADOR DE JOGOS EM BOLINHAS VERDES
-    function construirBolinhasJogos(jogosStr) {
-        if (!jogosStr || jogosStr.trim() === "" || jogosStr === "Nenhum cadastrado") {
-            return `<p class="text-sm text-gray-500 italic">Nenhum número fixo cadastrado (Modo Aleatório ativo).</p>`;
-        }
-        
-        const jogos = jogosStr.split(" | ");
-        return jogos.map((jogo, index) => {
-            const dezenas = jogo.split(",").map(d => d.trim());
-            const bolinhasHtml = dezenas.map(num => `
-                <div class="w-8 h-8 md:w-9 md:h-9 bg-gradient-to-br from-green-500 to-green-700 text-white rounded-full flex items-center justify-center font-bold font-mono text-sm shadow-md border border-green-600">
-                    ${num}
-                </div>
-            `).join("");
-
-            return `
-                <div class="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                    <span class="text-xs font-bold text-green-800 block mb-1.5 uppercase tracking-wider">Jogo ${index + 1}</span>
-                    <div class="flex flex-wrap gap-2">${bolinhasHtml}</div>
-                </div>
-            `;
-        }).join("<div class='my-2'></div>"); // Quebra de linha física entre jogo 1 e jogo 2 se for dobrado
-    }
-
-    // LOGIN
-    async function doLogin() {
-        const cel = document.getElementById('login-celular').value;
-        const textVal = document.getElementById('login-data-text').value;
-        const dt = obterDataFormatadaAPI(textVal);
-        if(!cel || !dt) return alert("Preencha todos os campos!");
-        
-        const res = await apiCall("login", { celular: cel, dataNascimento: dt });
-        if(res.success) {
-            userSession = res.user;
-            chavePixAtual = res.chavePixBolao || "Não configurada";
-            weeklyInfoAtual = res.weeklyInfo || { premio: "", dataHora: "" };
-            atualizarInterfaceDashboard();
-            await carregarHistoricosPainel();
-            showSection('sec-dashboard');
-        } else {
-            alert(res.message);
-        }
-    }
-
-    function atualizarInterfaceDashboard() {
-        document.getElementById('dash-nome').innerText = userSession.nome;
-        document.getElementById('dash-plano').innerText = userSession.plano;
-        document.getElementById('dash-tipo').innerText = userSession.tipoAposta;
-        document.getElementById('dash-apostas').innerText = userSession.apostasRestantes;
-        document.getElementById('dash-futuro').innerText = userSession.proximoPlano || "Nenhuma alteração agendada";
-        
-        // Injeta a renderização visual das dezenas em círculos
-        document.getElementById('dash-jogos-container').innerHTML = construirBolinhasJogos(userSession.jogos);
-        
-        // Injeta o valor da chave PIX no campo de cópia
-        document.getElementById('dash-pix-key').value = chavePixAtual;
-        document.getElementById('dash-chave-pix').value = userSession.chavePix || "";
-
-        document.getElementById('dash-edit-tipo').value = userSession.tipoAposta;
-        document.getElementById('dash-next-plano').value = userSession.proximoPlano || "";
-        toggleEditNumerosSorte();
-
-        // Alerta de 1 crédito restante
-        const avisoRecarga = document.getElementById('aviso-recarga');
-        if (avisoRecarga) {
-            if (Number(userSession.apostasRestantes) === 1) {
-                avisoRecarga.classList.remove('hidden');
-            } else {
-                avisoRecarga.classList.add('hidden');
-            }
-        }
-    }
-
-    // COPIAR CHAVE PIX
-    function copiarChavePix() {
-        const inputPix = document.getElementById('dash-pix-key');
-        inputPix.select();
-        inputPix.setSelectionRange(0, 99999);
-        navigator.clipboard.writeText(inputPix.value);
-        alert("Chave PIX copied com sucesso! Transfira o valor do plano para garantir seus créditos.");
-    }
-
-    // REGISTRO - ETAPA 1
-    function nextRegisterStep() {
-        currentData.nome = document.getElementById('reg-nome').value;
-        currentData.celular = document.getElementById('reg-celular').value;
-        currentData.dataNascimento = obterDataFormatadaAPI(document.getElementById('reg-data-text').value);
-        currentData.chavePix = "";
-        
-        if(!currentData.nome || !currentData.celular || !currentData.dataNascimento) 
-            return alert("Preencha todos os campos obrigatórios.");
-            
-        showSection('sec-register-2');
-    }
-
-    // DETALHES DO PLANO MODAL
-    function abrirModalDetalhesPlano() {
-        document.getElementById('modal-detalhes-plano').classList.remove('hidden');
-    }
-    function fecharModalDetalhesPlano() {
-        document.getElementById('modal-detalhes-plano').classList.add('hidden');
-    }
-
-    // REGISTRO - ETAPA 2
-    function selectPlan(plano) {
-        currentData.plano = plano;
-        showSection('sec-register-3');
-        if(plano === "Dobrado") {
-            document.getElementById('jogo2-container').classList.remove('hidden');
-        } else {
-            document.getElementById('jogo2-container').classList.add('hidden');
-        }
-    }
-
-    // REGISTRO - ETAPA 3
-    function selecionarTipoApostaReg(tipo) {
-        document.getElementById('reg-tipo').value = tipo;
-        const cardAleatorio = document.getElementById('card-tipo-aleatorio');
-        const cardFixo = document.getElementById('card-tipo-fixo');
-        
-        if (tipo === 'Aleatório') {
-            cardAleatorio.className = "border-2 border-green-600 bg-green-50 rounded-lg p-4 cursor-pointer hover:shadow transition flex flex-col items-center text-center";
-            cardFixo.className = "border-2 border-gray-200 rounded-lg p-4 cursor-pointer hover:border-blue-500 hover:shadow transition flex flex-col items-center text-center";
-        } else {
-            cardAleatorio.className = "border-2 border-gray-200 rounded-lg p-4 cursor-pointer hover:border-green-500 hover:shadow transition flex flex-col items-center text-center";
-            cardFixo.className = "border-2 border-blue-600 bg-blue-50 rounded-lg p-4 cursor-pointer hover:shadow transition flex flex-col items-center text-center";
-        }
-        toggleNumerosSorte();
-    }
-
-    function toggleNumerosSorte() {
-        const tipo = document.getElementById('reg-tipo').value;
-        if(tipo === "Número da sorte") {
-            document.getElementById('numeros-sorte-container').classList.remove('hidden');
-        } else {
-            document.getElementById('numeros-sorte-container').classList.add('hidden');
-        }
-    }
-
-    function toggleEditNumerosSorte() {
-        const tipo = document.getElementById('dash-edit-tipo').value;
-        const container = document.getElementById('dash-numeros-sorte-container');
-        if(tipo === "Número da sorte") {
-            container.classList.remove('hidden');
-            if(userSession.plano === "Dobrado") {
-                document.getElementById('dash-jogo2-container').classList.remove('hidden');
-            } else {
-                document.getElementById('dash-jogo2-container').classList.add('hidden');
-            }
-        } else {
-            container.classList.add('hidden');
-        }
-    }
-
-    function capturarEValidarJogos(className, identificadorJogo) {
-        const inputs = document.querySelectorAll(className);
-        let numeros = [];
-        for (let input of inputs) {
-            let valor = parseInt(input.value, 10);
-            if (isNaN(valor) || valor < 1 || valor > 60) {
-                alert(`Preencha todos os 6 campos do ${identificadorJogo} com números de 01 a 60.`);
-                input.focus();
-                return null;
-            }
-            let formatado = valor < 10 ? "0" + valor : "" + valor;
-            if (numeros.includes(formatado)) {
-                alert(`Número repetido (${formatado}) detectado no ${identificadorJogo}. Escolha números diferentes!`);
-                input.focus();
-                return null;
-            }
-            numeros.push(formatado);
-        }
-        numeros.sort((a, b) => parseInt(a) - parseInt(b));
-        return numeros.join(",");
-    }
-
-    async function finishRegister() {
-        const btn = document.getElementById('btn-finish-register');
-        const originalText = btn.innerHTML;
-        btn.disabled = true;
-        btn.innerHTML = "⏳ Gerando cadastro, aguarde...";
-
-        currentData.tipoAposta = document.getElementById('reg-tipo').value;
-        currentData.jogosCadastrados = "";
-
-        if(currentData.tipoAposta === "Número da sorte") {
-            const jogo1Str = capturarEValidarJogos('.j1-num', 'Jogo 1');
-            if(!jogo1Str) {
-                btn.disabled = false;
-                btn.innerHTML = originalText;
-                return;
-            }
-            currentData.jogosCadastrados = jogo1Str;
-
-            if(currentData.plano === "Dobrado") {
-                const jogo2Str = capturarEValidarJogos('.j2-num', 'Jogo 2');
-                if(!jogo2Str) {
-                    btn.disabled = false;
-                    btn.innerHTML = originalText;
-                    return;
-                }
-                currentData.jogosCadastrados += " | " + jogo2Str;
-            }
-        }
-
-        const res = await apiCall("register", currentData);
-        if(res.success) {
-            alert(res.message);
-            doLoginAfterRegister(currentData.celular, currentData.dataNascimento);
-        } else {
-            alert(res.message);
-            btn.disabled = false;
-            btn.innerHTML = originalText;
-        }
-    }
-
-    async function doLoginAfterRegister(celular, dataNascimentoAPI) {
-        document.getElementById('login-celular').value = celular;
-        if (dataNascimentoAPI.includes("-")) {
-            const p = dataNascimentoAPI.split("-");
-            document.getElementById('login-data-text').value = `${p[2]}/${p[1]}/${p[0]}`;
-        } else {
-            document.getElementById('login-data-text').value = dataNascimentoAPI;
-        }
-        await doLogin();
-    }
-
-    async function dispararAvisoPagamento() {
-        if(confirm("Deseja notificar o administrador que você realizou um novo pagamento via PIX?")) {
-            const res = await apiCall("notifyPaymentIntent", { celular: userSession.celular, nome: userSession.nome });
-            alert(res.message);
-        }
-    }
-
-    // REGISTRAR PAGAMENTO (VALIDAR CRÉDITOS)
-    async function registrarPagamento(celular) {
-        if (!adminToken) return alert("Sessão administrativa inválida ou expirada.");
-        
-        const res = await apiCall("registerPayment", { 
-            token: adminToken, 
-            celular: celular 
-        });
-
-        if (res.success) {
-            alert(res.message);
-            await loadAdminData(); // Recarrega a lista para mostrar o novo saldo de créditos em tempo real
-        } else {
-            alert(res.message);
-        }
-    }
-    
-    async function salvarChavePixParticipante() {
-        const pix = document.getElementById('dash-chave-pix').value;
-        const res = await apiCall("updateParticipantPix", { celular: userSession.celular, chavePix: pix });
-        if(res.success) {
-            alert(res.message);
-            userSession.chavePix = pix;
-            atualizarInterfaceDashboard();
-        } else {
-            alert(res.message);
-        }
-    }
-
-    async function salvarAlteracaoJogos() {
-        const tipoAposta = document.getElementById('dash-edit-tipo').value;
-        let jogosCadastrados = "";
-
-        if(tipoAposta === "Número da sorte") {
-            const j1 = capturarEValidarJogos('.edit-j1-num', 'Jogo 1');
-            if(!j1) return;
-            jogosCadastrados = j1;
-
-            if(userSession.plano === "Dobrado") {
-                const j2 = capturarEValidarJogos('.edit-j2-num', 'Jogo 2');
-                if(!j2) return;
-                jogosCadastrados += " | " + j2;
-            }
-        }
-
-        const res = await apiCall("updateLuckyNumbers", {
-            celular: userSession.celular,
-            tipoAposta: tipoAposta,
-            jogosCadastrados: jogosCadastrados
-        });
-
-        if(res.success) {
-            alert(res.message);
-            userSession.tipoAposta = tipoAposta;
-            userSession.jogos = jogosCadastrados;
-            atualizarInterfaceDashboard();
-        }
-    }
-
-    async function salvarAgendamentoPlano() {
-        const proximoPlano = document.getElementById('dash-next-plano').value;
-        const res = await apiCall("updateNextPlan", { celular: userSession.celular, proximoPlano: proximoPlano });
-        if(res.success) {
-            alert(res.message);
-            userSession.proximoPlano = proximoPlano;
-            atualizarInterfaceDashboard();
-        }
-    }
-
-    async function carregarHistoricosPainel() {
-        const res = await apiCall("getParticipantHistory", { celular: userSession.celular });
-        if(res.success) {
-            // --- ÚLTIMAS RECARGAS ---
-            const areaPagamentos = document.getElementById('hist-pagamentos-list');
-            areaPagamentos.innerHTML = "";
-            if(res.pagamentos.length === 0) {
-                areaPagamentos.innerHTML = `<p class="text-sm text-gray-500">Nenhum pagamento registrado.</p>`;
-            } else {
-                res.pagamentos.forEach(p => {
-                    areaPagamentos.innerHTML += `
-                        <div class="flex justify-between items-center bg-gray-50 p-2 rounded text-sm border-l-4 border-green-500">
-                            <span>Data: <strong>${formatarDataHora(p.data)}</strong></span>
-                            <span class="bg-green-100 text-green-800 font-bold px-2 py-0.5 rounded">+${p.creditos} Créditos</span>
-                        </div>
-                    `;
-                });
-            }
-
-            // Sorteio Atual Card Update
-            const pPremio = document.getElementById('dash-sorteio-premio');
-            const pData = document.getElementById('dash-sorteio-data');
-            const pJogosCont = document.getElementById('dash-sorteio-jogos-container');
-            
-            let premioVal = weeklyInfoAtual.premio;
-            if (premioVal && !isNaN(Number(premioVal))) {
-                premioVal = Number(premioVal).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            }
-            pPremio.innerText = premioVal ? "R$ " + premioVal : "A definir";
-            pData.innerText = weeklyInfoAtual.dataHora ? weeklyInfoAtual.dataHora : "Aguardando definição";
-            
-            // Jogos do participante na rodada atual (vindos direto do backend)
-            const jogosSorteioAtual = res.jogosSorteioAtual || [];
-            if (jogosSorteioAtual.length > 0) {
-                // Cada item em jogosSorteioAtual pode ter " | " separando 2 jogos (plano dobrado)
-                let allGames = [];
-                jogosSorteioAtual.forEach(linha => {
-                    linha.split(" | ").forEach(g => { if(g.trim()) allGames.push(g.trim()); });
-                });
-
-                if (allGames.length > 0) {
-                    const gamesListHtml = allGames.map((g, idx) => {
-                        const dezenas = g.split(",").map(d => d.trim());
-                        const bolinhas = dezenas.map(n => `<span class="inline-flex w-7 h-7 items-center justify-center bg-green-600 text-white rounded-full text-xs font-bold font-mono">${n}</span>`).join(" ");
-                        return `<div class="bg-white border rounded p-2">
-                            <span class="text-[10px] font-bold text-green-800 uppercase tracking-wide block mb-1">Jogo ${idx + 1}</span>
-                            <div class="flex flex-wrap gap-1">${bolinhas}</div>
-                        </div>`;
-                    }).join("");
-
-                    pJogosCont.innerHTML = `
-                        <details class="group cursor-pointer">
-                            <summary class="text-xs text-blue-600 font-bold hover:underline select-none">
-                                Ver meus ${allGames.length} jogo(s) desta rodada ▾
-                            </summary>
-                            <div class="mt-2 space-y-2 transition-all">
-                                ${gamesListHtml}
-                            </div>
-                        </details>
-                    `;
-                } else {
-                    pJogosCont.innerHTML = `<span class="text-xs text-gray-400 italic">Aguardando cadastro dos jogos</span>`;
-                }
-            } else {
-                pJogosCont.innerHTML = `<span class="text-xs text-gray-400 italic">Aguardando cadastro dos jogos</span>`;
-            }
-
-            // Jogos de TODOS os outros participantes na rodada atual
-            const pTodosJogosCont = document.getElementById('container-todos-jogos-sorteio');
-            if (pTodosJogosCont) {
-                const todosJogos = res.todosJogosSorteioAtual || [];
-                if (todosJogos.length > 0) {
-                    let todosHtml = "";
-                    let allOtherGames = [];
-                    todosJogos.forEach(linha => {
-                        linha.split(" | ").forEach(g => { if(g.trim()) allOtherGames.push(g.trim()); });
-                    });
-                    
-                    if (allOtherGames.length > 0) {
-                        allOtherGames.forEach((g, idx) => {
-                            const dezenas = g.split(",").map(d => d.trim());
-                            const bolinhas = dezenas.map(n => `<span class="inline-flex w-6 h-6 items-center justify-center bg-gray-500 text-white rounded-full text-[10px] font-bold font-mono">${n}</span>`).join(" ");
-                            todosHtml += `<div class="bg-gray-50 border rounded p-2 mb-2">
-                                <span class="text-[10px] font-bold text-gray-600 uppercase tracking-wide block mb-1">Jogo ${idx + 1}</span>
-                                <div class="flex flex-wrap gap-1">${bolinhas}</div>
-                            </div>`;
-                        });
-                        pTodosJogosCont.innerHTML = todosHtml;
-                    } else {
-                        pTodosJogosCont.innerHTML = `<span class="text-xs text-gray-400 italic">Nenhum jogo cadastrado nesta rodada.</span>`;
-                    }
-                } else {
-                    pTodosJogosCont.innerHTML = `<span class="text-xs text-gray-400 italic">Nenhum jogo cadastrado nesta rodada.</span>`;
-                }
-            }
-
-            // --- MURAL DOS ÚLTIMOS SORTEIOS ---
-            const areaSorteios = document.getElementById('hist-sorteios-container');
-            areaSorteios.innerHTML = "";
-            if(res.sorteios.length === 0) {
-                areaSorteios.innerHTML = `<p class="text-sm text-gray-500 text-center py-4">Nenhum sorteio registrado no sistema.</p>`;
-            } else {
-                // apostasDetalhe é o nome correto do campo retornado pelo backend
-                const apostasDetalhe = res.apostasDetalhe || {};
-                const targetCel = String(userSession.celular).replace(/\D/g, "");
-
-                res.sorteios.forEach((s, idx) => {
-                    // Filtra apenas apostas do próprio participante nesse sorteio
-                    const todasApostas = apostasDetalhe[s.idSorteio] || [];
-                    const minhas = todasApostas.filter(ap => String(ap.celular).replace(/\D/g, "") === targetCel);
-                    const houvePremiacao = Number(s.premioTotal) > 0;
-
-                    // Extrair data do ID (formato SORT-AAAAMMDD-HHmm)
-                    let dataExibir = s.idSorteio;
-                    const match = s.idSorteio.match(/(\d{4})(\d{2})(\d{2})/);
-                    if (match) dataExibir = `${match[3]}/${match[2]}/${match[1]}`;
-
-                    // Melhor jogo e premiação do participante
-                    let melhorAcertos = -1;
-                    let melhorJogo = "";
-                    let jogoPremiadoHtml = "";
-
-                    minhas.forEach(ap => {
-                        const acertosArr = String(ap.acertos).match(/(\d+) acertos/g) || [];
-                        acertosArr.forEach((a, ji) => {
-                            const num = parseInt(a);
-                            const jogos = ap.jogos.split(" | ");
-                            if(num > melhorAcertos) {
-                                melhorAcertos = num;
-                                melhorJogo = jogos[ji] || ap.jogos;
-                            }
-                        });
-                        if(Number(ap.premio) > 0) {
-                            jogoPremiadoHtml = `<div class="mt-2 bg-yellow-50 border border-yellow-300 rounded p-2 text-xs">
-                                🏆 <strong class="text-yellow-800">Você foi premiado nessa rodada!</strong><br>
-                                Prêmio recebido: <strong class="text-green-700">R$ ${Number(ap.premio).toFixed(2)}</strong>
-                            </div>`;
-                        }
-                    });
-
-                    const melhorJogoHtml = melhorAcertos >= 0 ? `
-                        <div class="mt-2 text-xs">
-                            <span class="text-gray-500">Seu melhor jogo: </span>
-                            <span class="font-mono font-bold text-blue-700">${melhorJogo}</span>
-                            <span class="ml-1 bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-bold">${melhorAcertos} acerto(s)</span>
-                        </div>` : `<div class="mt-2 text-xs text-gray-400 italic">Você não participou dessa rodada.</div>`;
-
-                    // Jogos de TODOS os participantes (apenas os números)
-                    let todosJogosRodadaHtml = "";
-                    if (todasApostas && todasApostas.length > 0) {
-                        let allGamesRound = [];
-                        todasApostas.forEach(ap => {
-                            if (ap.jogos) {
-                                // Para cada aposta (pode ter 2 jogos se dobrado), extrair dezenas e acertos juntos
-                                const jogosSep = ap.jogos.split(" | ");
-                                const acertosSep = ap.acertos ? String(ap.acertos).match(/(\d+) acertos/g) : null;
-                                
-                                jogosSep.forEach((g, i) => {
-                                    if (g.trim()) {
-                                        let hitText = (acertosSep && acertosSep[i]) ? ` (${acertosSep[i].split(" ")[0]})` : "";
-                                        allGamesRound.push(g.trim() + hitText);
-                                    }
-                                });
-                            }
-                        });
-                        if (allGamesRound.length > 0) {
-                            todosJogosRodadaHtml = `
-                            <div class="mt-2 border-t pt-2">
-                                <details class="group cursor-pointer">
-                                    <summary class="text-xs text-blue-600 font-bold hover:underline select-none">
-                                        + Ver todos os ${allGamesRound.length} jogos desta rodada ▾
-                                    </summary>
-                                    <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-40 overflow-y-auto pr-1">
-                                        ${allGamesRound.map(g => `<div class="font-mono text-[10px] text-gray-600 bg-gray-100 border border-gray-200 rounded px-1.5 py-1 text-center">${g}</div>`).join('')}
-                                    </div>
-                                </details>
-                            </div>`;
-                        }
-                    }
-
-                    const detailId = `detalhe-sorteio-${idx}`;
-
-                    areaSorteios.innerHTML += `
-                        <div class="border rounded-lg bg-white overflow-hidden shadow-sm">
-                            <!-- RESUMO MINIMIZADO -->
-                            <div class="flex items-center justify-between p-3 cursor-pointer hover:bg-gray-50" onclick="document.getElementById('${detailId}').classList.toggle('hidden')">
-                                <div class="flex items-center gap-2">
-                                    <span class="text-xs font-bold text-gray-500">${dataExibir}</span>
-                                    ${houvePremiacao
-                                        ? `<span class="bg-yellow-100 text-yellow-800 text-xs font-bold px-2 py-0.5 rounded-full">🏆 Premiado</span>`
-                                        : `<span class="bg-gray-100 text-gray-500 text-xs px-2 py-0.5 rounded-full">Sem premiação</span>`
-                                    }
-                                    <span class="text-[10px] text-gray-400 font-mono hidden sm:block">${s.sorteados}</span>
-                                </div>
-                                <span class="text-xs text-blue-600 font-bold">+ Detalhes</span>
-                            </div>
-                            <!-- DETALHES EXPANDIDOS (ocultos por padrão) -->
-                            <div id="${detailId}" class="hidden border-t p-3 space-y-2">
-                                <div class="flex flex-wrap gap-2 items-center">
-                                    <span class="text-xs text-gray-500">Números sorteados:</span>
-                                    ${(s.sorteados || '').split(',').map(n => `<span class="w-7 h-7 flex items-center justify-center bg-green-600 text-white rounded-full text-xs font-bold font-mono">${n.trim()}</span>`).join('')}
-                                </div>
-                                ${jogoPremiadoHtml}
-                                ${melhorJogoHtml}
-                                ${minhas.length > 0 ? `
-                                <div class="pt-1">
-                                    <p class="text-[10px] uppercase font-bold text-gray-400 mb-1">Seus jogos nesta rodada:</p>
-                                    ${minhas.map(ap => `<div class="font-mono text-xs text-gray-700 bg-gray-50 rounded px-2 py-1">${ap.jogos} &nbsp;<span class="text-blue-600">(${ap.acertos})</span></div>`).join('')}
-                                </div>` : ''}
-                                ${todosJogosRodadaHtml}
-                            </div>
-                        </div>
-                    `;
-                });
-            }
-        }
-    }
-
-    // ADMIN FUNCTIONS
-    async function doAdminLogin() {
-        const user = document.getElementById('admin-user').value;
-        const pass = document.getElementById('admin-pass').value;
-        const res = await apiCall("adminLogin", { user, pass });
-        if(res.success) {
-            adminToken = res.token;
-            loadAdminData();
-        } else {
-            alert(res.message);
-        }
-    }
-
-    async function loadAdminData() {
-        const res = await apiCall("getAdminData", { token: adminToken });
-        if(res.success) {
-            listaParticipantesGlob = res.participantes || [];
-            renderizarTabelaParticipantes();
-
-            const selectRodada = document.getElementById('adm-concurso-id');
-            selectRodada.innerHTML = `<option value="">-- Selecione a Rodada --</option>`;
-            if(res.rodadasAbertas && res.rodadasAbertas.length > 0) {
-                res.rodadasAbertas.forEach(r => {
-                    selectRodada.innerHTML += `<option value="${r}">${r}</option>`;
-                });
-            }
-
-            document.getElementById('adm-pix-key').value = res.chavePix || "";
-            if (res.weeklyInfo) {
-                document.getElementById('adm-sorteio-premio-val').value = res.weeklyInfo.premio || "";
-                document.getElementById('adm-sorteio-data-val').value = res.weeklyInfo.dataHora || "";
-            }
-            showSection('sec-admin-dash');
-        }
-    }
-
-    function renderizarTabelaParticipantes() {
-        const apenasAtivos = document.getElementById('filtro-apenas-ativos').checked;
-        const tbody = document.getElementById('admin-table-body');
-        tbody.innerHTML = "";
-        
-        listaParticipantesGlob.forEach(p => {
-            if (apenasAtivos && p.status === "Inativo") return;
-            
-            const selectedAtivo = p.status === "Ativo" ? "selected" : "";
-            const selectedInativo = p.status === "Inativo" ? "selected" : "";
-            
-            tbody.innerHTML += `
-                <tr class="border-b hover:bg-gray-50">
-                    <td class="p-2 text-sm font-medium text-gray-900">${p.nome}</td>
-                    <td class="p-2 text-sm text-gray-600">${p.plano}</td>
-                    <td class="p-2 text-xs font-mono text-gray-500 max-w-xs truncate">${p.tipoAposta === "Aleatório" ? "🎲 Aleatório" : p.jogos}</td>
-                    <td class="p-2 text-xs font-mono text-gray-600">${p.chavePix || '<span class="italic text-gray-400">Não cadastrada</span>'}</td>
-                    <td class="p-2 text-sm font-bold ${p.apostasRestantes > 0 ? 'text-green-600' : 'text-red-600'}">${p.apostasRestantes} cota(s)</td>
-                    <td class="p-2 text-center flex items-center justify-center gap-2">
-                        <select onchange="alterarStatusParticipante('${p.celular}', this.value)" class="text-xs border rounded p-1 font-medium bg-white focus:outline-none">
-                            <option value="Ativo" ${selectedAtivo}>Ativo</option>
-                            <option value="Inativo" ${selectedInativo}>Inativo</option>
-                        </select>
-                        <button onclick="registrarPagamento('${p.celular}')" class="bg-green-500 text-white px-2.5 py-1 rounded text-xs font-bold hover:bg-green-600 shadow transition">Validar +${p.plano === 'Avulso' ? '1' : '4'} Créd.</button>
-                    </td>
-                </tr>
-            `;
-        });
-    }
-
-    async function alterarStatusParticipante(celular, status) {
-        const res = await apiCall("updateParticipantStatus", {
-            token: adminToken,
-            celular: celular,
-            status: status
-        });
-        if (res.success) {
-            const p = listaParticipantesGlob.find(x => x.celular == celular);
-            if (p) p.status = status;
-            renderizarTabelaParticipantes();
-        } else {
-            alert(res.message);
-        }
-    }
-
-    async function salvarPixKeyAdmin() {
-        const chave = document.getElementById('adm-pix-key').value;
-        const res = await apiCall("savePixKey", { token: adminToken, chavePix: chave });
-        alert(res.message);
-    }
-
-    async function salvarInformacoesSorteio() {
-        const premio = document.getElementById('adm-sorteio-premio-val').value;
-        const dataHora = document.getElementById('adm-sorteio-data-val').value;
-        const res = await apiCall("saveWeeklySorteio", {
-            token: adminToken,
-            premio: premio,
-            dataHora: dataHora
-        });
-        alert(res.message);
-    }
-
-    async function fazerApostaGeral() {
-        if(confirm("Deseja gerar e consolidar a rodada de jogos de todos os usuários com créditos ativos?")) {
-            const res = await apiCall("fazerAposta", { token: adminToken });
-            alert(res.message);
-            loadAdminData();
-        }
-    }
-
-    // PROCESSO DE APURAÇÃO EM 2 ETAPAS (NOVO)
-    async function executarEtapa1Conferencia() {
-        const idSorteio = document.getElementById('adm-concurso-id').value;
-        const dezenas = document.getElementById('adm-dezenas-sorteadas').value;
-
-        if(!idSorteio || !dezenas) return alert("Selecione a rodada e digite os números sorteados para conferir!");
-
-        const res = await apiCall("verificarGanhadoresAdmin", {
-            token: adminToken,
-            idSorteio: idSorteio,
-            numerosSorteados: dezenas
-        });
-
-        if(res.success) {
-            alert(res.message);
-            // Libera o campo de prêmio e o botão de rateio final
-            document.getElementById('adm-premio-total').disabled = false;
-            document.getElementById('btn-etapa2-rateio').disabled = false;
-            document.getElementById('btn-etapa2-rateio').classList.remove('bg-gray-400', 'cursor-not-allowed');
-            document.getElementById('btn-etapa2-rateio').classList.add('bg-amber-600', 'hover:bg-amber-700');
-        } else {
-            alert(res.message);
-        }
-    }
-
-    async function executarEtapa2Rateio() {
-        const idSorteio = document.getElementById('adm-concurso-id').value;
-        const dezenas = document.getElementById('adm-dezenas-sorteadas').value;
-        const premioTotal = document.getElementById('adm-premio-total').value;
-
-        if(!premioTotal || parseFloat(premioTotal) < 0) return alert("Por favor, preencha o valor do prêmio!");
-
-        const res = await apiCall("finalizarRateioAdmin", {
-            token: adminToken,
-            idSorteio: idSorteio,
-            numerosSorteados: dezenas,
-            premioTotal: premioTotal
-        });
-
-        if(res.success) {
-            // Monta o Modal de Resumo do Rateio na Tela do Admin
-            document.getElementById('modal-total-premio').innerText = "R$ " + Number(res.resumo.premioTotal).toFixed(2);
-            document.getElementById('modal-total-participantes').innerText = res.resumo.totalParticipantes;
-            
-            const listaModal = document.getElementById('modal-lista-rateio');
-            listaModal.innerHTML = "";
-            res.resumo.lista.forEach(item => {
-                listaModal.innerHTML += `
-                    <div class="flex justify-between border-b py-1.5 text-sm">
-                        <span class="font-medium text-gray-700">${item.nome} (${item.plano})</span>
-                        <span class="font-mono text-green-700 font-bold">R$ ${Number(item.valorReceber).toFixed(2)}</span>
-                    </div>
-                `;
-            });
-
-            // Exibe a janela modal na tela
-            document.getElementById('modal-rateio-container').classList.remove('hidden');
-            
-            // Reseta controles de proteção
-            document.getElementById('adm-premio-total').disabled = true;
-            document.getElementById('adm-premio-total').value = "";
-            document.getElementById('adm-dezenas-sorteadas').value = "";
-            document.getElementById('btn-etapa2-rateio').disabled = true;
-            document.getElementById('btn-etapa2-rateio').classList.add('bg-gray-400', 'cursor-not-allowed');
-            
-            loadAdminData();
-        } else {
-            alert(res.message);
-        }
-    }
-
-    function fecharModalRateio() {
-        document.getElementById('modal-rateio-container').classList.add('hidden');
-    }
-</script>
-
-<div class="max-w-3xl mx-auto bg-white p-4 md:p-6 rounded-lg shadow-md mt-4">
-    <h1 class="text-3xl font-bold text-center text-green-700 mb-6">Bolão Mega Sena</h1>
-
-    <div id="loading" class="hidden text-center text-blue-600 font-bold mb-4 animate-pulse">⚙️ Processando comando no servidor, aguarde...</div>
-
-    <!-- SEÇÃO 1: LOGIN -->
-    <section id="sec-login">
-        <!-- CRONOGRAMA DE REGISTRO E JOGOS -->
-        <div class="bg-amber-50 border border-amber-200 text-amber-900 p-4 rounded-xl mb-5 text-sm leading-relaxed shadow-sm flex items-start gap-2.5">
-            <span class="text-base mt-0.5">🎲</span>
-            <div>
-                <strong class="block mb-1 text-amber-950">Bem-vindo(a) ao nosso Bolão!</strong>
-                <p class="mb-2">
-                    Este é um site de gestão independente e <strong>não possui nenhum vínculo oficial com a Caixa Econômica Federal</strong>.
-                </p>
-                <p>
-                    Participamos dos sorteios que ocorrem às <strong>quintas-feiras</strong>. Para garantir a sua participação, os jogos da rodada são registrados no dia anterior (quarta-feira) impreterivelmente até as <strong>17:00</strong>. 
-                </p>
-                <p class="mt-2">
-                    Caso o sorteio de quinta-feira seja adiado ou cancelado, os jogos serão automaticamente registrados para o <strong>próximo sorteio posterior</strong>, que geralmente acontece aos sábados.
-                </p>
-            </div>
-        </div>
-
-        <h2 class="text-xl font-semibold mb-4 text-center">Acessar Área do Participante</h2>
-        <div class="space-y-4">
-            <div class="space-y-1">
-                <label class="block text-xs font-semibold text-gray-600">Celular WhatsApp:</label>
-                <input type="text" id="login-celular" oninput="formatarTelefone(this)" placeholder="Número do Celular (com DDD)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
-            </div>
-            
-            <div class="space-y-1">
-                <label class="block text-xs font-semibold text-gray-600">Data de Nascimento (dd/mm/aaaa):</label>
-                <div class="flex gap-2">
-                    <input type="text" id="login-data-text" placeholder="DD/MM/AAAA" maxlength="10" oninput="formatarDataInput(this)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
-                    <button onclick="abrirCalendario('login-data-picker')" class="bg-gray-200 hover:bg-gray-300 border p-2 rounded flex items-center justify-center shrink-0 w-11 h-11" title="Selecionar no calendário">📅</button>
-                    <input type="date" id="login-data-picker" onchange="sincronizarDatePicker(this, 'login-data-text')" class="w-0 h-0 border-0 opacity-0 absolute">
-                </div>
-            </div>
-            
-            <button onclick="doLogin()" class="w-full bg-green-600 text-white p-3 rounded font-bold hover:bg-green-700">Entrar no Painel</button>
-        </div>
-        <div class="mt-6 text-center space-y-2">
-            <p>Não tem cadastro? <button onclick="goToRegister()" class="text-white bg-blue-600 hover:bg-blue-700 px-4 py-1.5 rounded-full font-bold ml-1 transition shadow-sm hover:shadow">Cadastre-se aqui</button></p>
-            <p><button onclick="goToAdmin()" class="text-gray-500 text-sm hover:underline">Acesso Administrativo</button></p>
-        </div>
-    </section>
-
-    <!-- SEÇÃO 2: REGISTRO (DADOS) -->
-    <section id="sec-register-1" class="hidden">
-        <h2 class="text-xl font-semibold mb-2">Novo Cadastro</h2>
-        <div class="bg-yellow-100 text-yellow-800 p-3 rounded mb-4 text-sm">
-            <strong>Atenção:</strong> Informe seu WhatsApp real para receber avisos e notificações de rateios premiados!
-        </div>
-        <div class="space-y-4">
-            <div class="space-y-1">
-                <label class="block text-xs font-semibold text-gray-600">Nome Completo:</label>
-                <input type="text" id="reg-nome" placeholder="Nome Completo" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
-            </div>
-            
-            <div class="space-y-1">
-                <label class="block text-xs font-semibold text-gray-600">Celular WhatsApp:</label>
-                <input type="text" id="reg-celular" oninput="formatarTelefone(this)" placeholder="Celular WhatsApp (com DDD)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
-            </div>
-            
-            <div class="space-y-1">
-                <label class="block text-xs font-semibold text-gray-600">Data de Nascimento (dd/mm/aaaa):</label>
-                <div class="flex gap-2">
-                    <input type="text" id="reg-data-text" placeholder="DD/MM/AAAA" maxlength="10" oninput="formatarDataInput(this)" class="w-full p-2 border rounded focus:ring-2 focus:ring-green-500">
-                    <button onclick="abrirCalendario('reg-data-picker')" class="bg-gray-200 hover:bg-gray-300 border p-2 rounded flex items-center justify-center shrink-0 w-11 h-11" title="Selecionar no calendário">📅</button>
-                    <input type="date" id="reg-data-picker" onchange="sincronizarDatePicker(this, 'reg-data-text')" class="w-0 h-0 border-0 opacity-0 absolute">
-                </div>
-            </div>
-            
-            <div class="flex justify-between items-center pt-2">
-                <button onclick="goToLogin()" class="text-gray-600 hover:underline">Voltar</button>
-                <button onclick="nextRegisterStep()" class="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700">Avançar</button>
-            </div>
-        </div>
-    </section>
-
-    <!-- SEÇÃO 3: REGISTRO (PLANO) -->
-    <section id="sec-register-2" class="hidden">
-        <div class="flex justify-between items-center mb-4">
-            <h2 class="text-xl font-semibold">Escolha seu Plano Inicial</h2>
-            <button onclick="abrirModalDetalhesPlano()" class="bg-gray-200 hover:bg-gray-300 text-xs font-semibold px-3 py-1.5 rounded flex items-center gap-1">ℹ️ Detalhes dos Valores</button>
-        </div>
-        <div class="grid md:grid-cols-3 gap-4">
-            <div class="border-2 rounded-lg p-5 cursor-pointer hover:border-green-500 hover:shadow-lg transition bg-white border-green-50 flex flex-col justify-between" onclick="selectPlan('Avulso')">
-                <div>
-                    <h3 class="text-2xl font-bold text-green-700">Avulso</h3>
-                    <p class="text-green-600 font-bold text-xl mb-3">R$ 7,25 /jogo</p>
-                    <p class="text-gray-600 text-sm">Carregue e jogue na próxima rodada. Sem fidelidade semanal.</p>
-                </div>
-                <div class="text-[11px] bg-green-50 text-green-700 p-2 rounded mt-4 text-center font-semibold">1 Jogo (1 Sorteio)</div>
-            </div>
-            <div class="border-2 rounded-lg p-5 cursor-pointer hover:border-blue-500 hover:shadow-lg transition bg-white flex flex-col justify-between" onclick="selectPlan('Padrão')">
-                <div>
-                    <h3 class="text-2xl font-bold text-gray-800">Padrão</h3>
-                    <p class="text-blue-600 font-bold text-xl mb-3">R$ 28,00 /mês</p>
-                    <p class="text-gray-600 text-sm">Toda semana uma aposta correndo em seu nome, durante 4 semanas seguidas.</p>
-                </div>
-                <div class="text-[11px] bg-blue-50 text-blue-700 p-2 rounded mt-4 text-center font-semibold">4 Jogos Totais no Mês</div>
-            </div>
-            <div class="border-2 rounded-lg p-5 cursor-pointer hover:border-purple-500 hover:shadow-lg transition bg-white border-purple-100 flex flex-col justify-between" onclick="selectPlan('Dobrado')">
-                <div>
-                    <h3 class="text-2xl font-bold text-purple-700">Dobrado</h3>
-                    <p class="text-purple-600 font-bold text-xl mb-3">R$ 54,00 /mês</p>
-                    <p class="text-gray-600 text-sm">Toda semana duas apostas correndo em seu nome, durante 4 semanas seguidas.</p>
-                </div>
-                <div class="text-[11px] bg-purple-50 text-purple-700 p-2 rounded mt-4 text-center font-semibold">8 Jogos Totais no Mês</div>
-            </div>
-        </div>
-        <button onclick="showSection('sec-register-1')" class="mt-6 text-gray-600 hover:underline">← Voltar</button>
-    </section>
-
-    <!-- SEÇÃO 4: REGISTRO (TIPO DE APOSTA) -->
-    <section id="sec-register-3" class="hidden">
-        <h2 class="text-xl font-semibold mb-4">Como deseja gerar seus jogos?</h2>
-        <input type="hidden" id="reg-tipo" value="Aleatório">
-        
-        <div class="grid md:grid-cols-2 gap-4 mb-6">
-            <div id="card-tipo-aleatorio" class="border-2 border-green-600 bg-green-50 rounded-lg p-4 cursor-pointer hover:shadow transition flex flex-col items-center text-center" onclick="selecionarTipoApostaReg('Aleatório')">
-                <span class="text-3xl mb-1">🎲</span>
-                <h4 class="font-bold text-gray-800 text-sm">Modo Aleatório</h4>
-                <p class="text-[11px] text-gray-500 mt-1">Surpresinha semanal: o sistema gera dezenas automáticas para você a cada rodada.</p>
-            </div>
-            <div id="card-tipo-fixo" class="border-2 border-gray-200 rounded-lg p-4 cursor-pointer hover:border-blue-500 hover:shadow transition flex flex-col items-center text-center" onclick="selecionarTipoApostaReg('Número da sorte')">
-                <span class="text-3xl mb-1">🎯</span>
-                <h4 class="font-bold text-gray-800 text-sm">Números da Sorte</h4>
-                <p class="text-[11px] text-gray-500 mt-1">Jogos Fixos: você define suas 6 dezenas e elas são apostadas em todas as rodadas.</p>
-            </div>
-        </div>
-
-        <div id="numeros-sorte-container" class="hidden bg-gray-50 p-4 border rounded mb-6">
-            <div class="mb-6">
-                <label class="block font-bold mb-2 text-sm text-gray-700">Dezenas do Jogo 1</label>
-                <div class="flex gap-2 justify-center">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-gray-300 rounded-lg font-bold j1-num bg-white">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-gray-300 rounded-lg font-bold j1-num bg-white">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-gray-300 rounded-lg font-bold j1-num bg-white">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-gray-300 rounded-lg font-bold j1-num bg-white">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-gray-300 rounded-lg font-bold j1-num bg-white">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-gray-300 rounded-lg font-bold j1-num bg-white">
-                </div>
-            </div>
-
-            <div id="jogo2-container" class="hidden mb-4">
-                <label class="block font-bold mb-2 text-sm text-purple-700">Dezenas do Jogo 2 (Plano Dobrado)</label>
-                <div class="flex gap-2 justify-center">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-purple-300 rounded-lg font-bold j2-num bg-white">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-purple-300 rounded-lg font-bold j2-num bg-white">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-purple-300 rounded-lg font-bold j2-num bg-white">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-purple-300 rounded-lg font-bold j2-num bg-white">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-purple-300 rounded-lg font-bold j2-num bg-white">
-                    <input type="number" min="1" max="60" placeholder="--" class="w-10 h-10 text-center border-2 border-purple-300 rounded-lg font-bold j2-num bg-white">
-                </div>
-            </div>
-        </div>
-
-        <div class="flex justify-between mt-6">
-            <button onclick="showSection('sec-register-2')" class="text-gray-600 hover:underline">Voltar</button>
-            <button id="btn-finish-register" onclick="finishRegister()" class="bg-green-600 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-green-700 shadow">Finalizar Cadastro</button>
-        </div>
-    </section>
-
-    <!-- SEÇÃO 5: DASHBOARD PARTICIPANTE -->
-    <section id="sec-dashboard" class="hidden">
-        <div class="flex justify-between items-center mb-4 border-b pb-2">
-            <h2 class="text-2xl font-bold">Olá, <span id="dash-nome" class="text-green-700"></span>!</h2>
-            <div class="flex gap-2">
-                <button onclick="showInstallModal()" class="bg-blue-600 text-white px-3 py-1 text-sm rounded hover:bg-blue-700 font-medium flex items-center gap-1 shadow-sm">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                    Instalar App
-                </button>
-                <button onclick="goToLogin()" class="bg-gray-200 text-gray-700 px-3 py-1 text-sm rounded hover:bg-gray-300 font-medium">Sair</button>
-            </div>
-        </div>
-
-        <div class="grid md:grid-cols-3 gap-4 mb-6">
-            <!-- DADOS DO PLANO -->
-            <div class="bg-white border rounded-xl p-4 shadow-sm space-y-2 flex flex-col justify-between">
-                <div>
-                    <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider border-b pb-1">Seu Plano Vigente</h3>
-                    <p class="text-sm"><strong>Plano Atual:</strong> <span id="dash-plano" class="font-medium"></span></p>
-                    <p class="text-sm"><strong>Tipo de Processamento:</strong> <span id="dash-tipo" class="font-medium"></span></p>
-                    <p class="text-sm"><strong>Créditos Restantes:</strong> <span id="dash-apostas" class="font-bold text-blue-600 text-base"></span> rodadas</p>
-                    <p class="text-xs text-purple-700"><strong>Agendado Próximo Ciclo:</strong> <span id="dash-futuro" class="font-bold"></span></p>
-                    
-                    <div id="aviso-recarga" class="hidden mt-2 bg-red-50 border border-red-200 text-red-700 p-2 rounded text-xs font-semibold leading-relaxed animate-pulse">
-                        ⚠️ <strong>Última rodada restante!</strong> Efetue o pagamento PIX e avise o admin para recarregar seus créditos e continuar participando.
-                    </div>
-                </div>
-
-                <!-- CONTAINER FORMATADO DAS BOLINHAS VERDES -->
-                <div class="pt-2 border-t mt-2">
-                    <strong class="text-xs text-gray-700 block mb-1">Seus Números Cadastrados:</strong>
-                    <div id="dash-jogos-container" class="space-y-2"></div>
-                </div>
-            </div>
-
-            <!-- SORTEIO ATUAL -->
-            <div class="bg-white border rounded-xl p-4 shadow-sm flex flex-col justify-between">
-                <div>
-                    <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider border-b pb-1">🏆 Sorteio Atual</h3>
-                    <p class="text-sm mt-1"><strong>Prêmio Estimado:</strong> <span id="dash-sorteio-premio" class="font-bold text-green-700"></span></p>
-                    <p class="text-sm"><strong>Data do Sorteio:</strong> <span id="dash-sorteio-data" class="font-medium"></span></p>
-                    
-                    <div class="mt-3 border-t pt-2">
-                        <strong class="text-xs text-gray-600 block mb-1">Seus Jogos nesta Rodada:</strong>
-                        <div id="dash-sorteio-jogos-container" class="space-y-2">
-                            <!-- Populated dynamically or showing "Aguardando cadastro dos jogos" -->
-                        </div>
-                    </div>
-
-                    <div class="mt-3 pt-2 border-t border-gray-100">
-                        <button onclick="toggleTodosJogosSorteio()" class="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center justify-between w-full focus:outline-none">
-                            <span>Ver todos os jogos do sorteio atual</span>
-                            <svg id="icon-toggle-todos-jogos" class="w-4 h-4 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                        </button>
-                        <div id="container-todos-jogos-sorteio" class="hidden mt-3 space-y-3 pb-2 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
-                            <!-- Populated dynamically with everyone's games -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- QUADRO INFORMAR PAGAMENTO COM COPIA DE CHAVE PIX -->
-            <div class="bg-gradient-to-br from-green-50 to-emerald-100 border border-green-200 rounded-xl p-4 flex flex-col justify-between shadow-sm">
-                <div>
-                    <h4 class="font-bold text-green-900 text-sm uppercase tracking-wider">Renovação / Créditos</h4>
-                    <p class="text-xs text-green-800 mt-1">Transfira o valor do seu plano e avise o administrador para liberar mais rodadas cumulativas.</p>
-                    
-                    <!-- CAMPO DA CHAVE PIX REQUISITADA -->
-                    <div class="mt-3 bg-white p-2 rounded-lg border border-green-200 shadow-sm">
-                        <label class="block text-[10px] font-bold uppercase tracking-wide text-green-800 mb-0.5">Chave PIX do Bolão:</label>
-                        <div class="flex gap-1.5 items-center">
-                            <input type="text" id="dash-pix-key" readonly class="w-full text-xs font-mono font-bold bg-gray-50 border p-1 rounded text-gray-700 select-all focus:outline-none">
-                            <button onclick="copiarChavePix()" class="bg-green-700 text-white font-bold text-[11px] px-2 py-1 rounded shadow hover:bg-green-800 shrink-0">Copiar</button>
-                        </div>
-                    </div>
-                </div>
-                <button onclick="dispararAvisoPagamento()" class="w-full bg-green-600 text-white font-bold text-sm py-2 px-3 rounded-lg shadow hover:bg-green-700 transition mt-4">👉 Informar Pagamento</button>
-            </div>
-        </div>
-
-        <!-- SEÇÕES DE EDIÇÃO -->
-        <div class="grid md:grid-cols-3 gap-4 mb-6">
-            <div class="bg-gray-50 p-4 border rounded-xl shadow-sm">
-                <h3 class="font-bold text-gray-800 text-sm mb-2">Alterar Meus Números da Sorte</h3>
-                <select id="dash-edit-tipo" class="w-full p-2 text-sm border rounded mb-3 bg-white" onchange="toggleEditNumerosSorte()">
-                    <option value="Aleatório">Aleatório (Surpresinha Semanal)</option>
-                    <option value="Número da sorte">Número da Sorte (Fixo Escolhido)</option>
-                </select>
-
-                <div id="dash-numeros-sorte-container" class="hidden space-y-3 pt-1 border-t">
-                    <div>
-                        <label class="block text-xs font-bold text-gray-600 mb-1">Jogo 1 (6 Dezenas):</label>
-                        <div class="flex gap-1 justify-start">
-                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j1-num bg-white">
-                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j1-num bg-white">
-                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j1-num bg-white">
-                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j1-num bg-white">
-                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j1-num bg-white">
-                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j1-num bg-white">
-                        </div>
-                    </div>
-                    <div id="dash-jogo2-container" class="hidden">
-                        <label class="block text-xs font-bold text-purple-700 mb-1">Jogo 2 (Exclusivo Dobrado):</label>
-                        <div class="flex gap-1 justify-start">
-                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j2-num bg-white">
-                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j2-num bg-white">
-                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j2-num bg-white">
-                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j2-num bg-white">
-                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j2-num bg-white">
-                            <input type="number" min="1" max="60" class="w-8 h-8 text-center text-sm border rounded font-bold edit-j2-num bg-white">
-                        </div>
-                    </div>
-                </div>
-                <button onclick="salvarAlteracaoJogos()" class="mt-3 w-full bg-blue-600 text-white text-xs font-bold py-1.5 rounded hover:bg-blue-700">Salvar Mudança de Jogo</button>
-            </div>
-
-            <div class="bg-gray-50 p-4 border rounded-xl shadow-sm flex flex-col justify-between">
-                <div>
-                    <h3 class="font-bold text-gray-800 text-sm mb-1">Alterar Plano para o Próximo Ciclo</h3>
-                    <select id="dash-next-plano" class="w-full p-2 text-sm border rounded bg-white">
-                        <option value="">Manter o mesmo plano atual</option>
-                        <option value="Avulso">Mudar para Plano Avulso (R$ 7,25)</option>
-                        <option value="Padrão">Mudar para Plano Padrão (R$ 28,00)</option>
-                        <option value="Dobrado">Mudar para Plano Dobrado (R$ 54,00)</option>
-                    </select>
-                </div>
-                <button onclick="salvarAgendamentoPlano()" class="mt-3 w-full bg-purple-700 text-white text-xs font-bold py-1.5 rounded hover:bg-purple-800">Agendar Alteração de Plano</button>
-            </div>
-
-            <div class="bg-gray-50 p-4 border rounded-xl shadow-sm flex flex-col justify-between">
-                <div>
-                    <h3 class="font-bold text-gray-800 text-sm mb-1">Minha Chave PIX</h3>
-                    <p class="text-xs text-gray-500 mb-2">Informe sua chave PIX para podermos te transferir prêmios em caso de contemplação.</p>
-                    <input type="text" id="dash-chave-pix" placeholder="Sua Chave PIX" class="w-full p-2 text-sm border rounded bg-white focus:outline-none focus:ring-1 focus:ring-green-500">
-                </div>
-                <button onclick="salvarChavePixParticipante()" class="mt-3 w-full bg-green-600 text-white text-xs font-bold py-1.5 rounded hover:bg-green-700">Salvar Chave PIX</button>
-            </div>
-        </div>
-
-        <!-- COMPARTILHAR BOLÃO -->
-        <div class="bg-gradient-to-r from-blue-600 to-indigo-500 rounded-xl p-4 mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm text-white">
-            <div>
-                <p class="font-bold text-sm">🤝 Compartilhar Bolão com Amigos</p>
-                <p class="text-xs text-blue-100 mt-0.5">Convide mais pessoas para participar do bolão e aumentar as chances do grupo!</p>
-            </div>
-            <div class="flex gap-2 w-full md:w-auto">
-                <button onclick="compartilharBolao('whatsapp')" class="flex-1 md:flex-initial bg-green-500 text-white font-bold text-xs px-4 py-2.5 rounded-lg shadow hover:bg-green-600 transition flex items-center justify-center gap-1.5">
-                    📱 WhatsApp
-                </button>
-                <button onclick="compartilharBolao('link')" class="flex-1 md:flex-initial bg-white text-indigo-700 font-bold text-xs px-4 py-2.5 rounded-lg shadow hover:bg-gray-100 transition flex items-center justify-center gap-1.5">
-                    🔗 Copiar Link
-                </button>
-            </div>
-        </div>
-
-        <div class="grid md:grid-cols-3 gap-4 border-t pt-4">
-            <div class="space-y-2 md:col-span-1">
-                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Últimas Recargas (Max 4)</h3>
-                <div id="hist-pagamentos-list" class="space-y-2"></div>
-            </div>
-            <div class="space-y-3 md:col-span-2">
-                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Mural dos Últimos Sorteios (Minimizado)</h3>
-                <div id="hist-sorteios-container" class="space-y-2 max-h-[450px] overflow-y-auto pr-1"></div>
-            </div>
-        </div>
-    </section>
-
-    <!-- SEÇÃO 6: LOGIN ADMIN -->
-    <section id="sec-admin-login" class="hidden">
-        <h2 class="text-xl font-bold mb-4 text-center">Administração</h2>
-        <input type="text" id="admin-user" placeholder="Usuário" class="w-full p-2 border rounded mb-3">
-        <input type="password" id="admin-pass" placeholder="Senha" class="w-full p-2 border rounded mb-4">
-        <button onclick="doAdminLogin()" class="w-full bg-black text-white p-2 rounded font-bold">Entrar no Admin</button>
-        <button onclick="goToLogin()" class="w-full mt-2 text-gray-600 text-sm hover:underline">Voltar ao site</button>
-    </section>
-
-    <!-- SEÇÃO 7: DASHBOARD ADMIN -->
-    <section id="sec-admin-dash" class="hidden space-y-6">
-        <div class="flex justify-between items-center border-b pb-2">
-            <h2 class="text-2xl font-bold text-gray-800">Painel Administrativo</h2>
-            <button onclick="goToLogin()" class="text-red-500 font-bold hover:underline">Sair do Admin</button>
-        </div>
-
-        <!-- ADIÇÃO: CONFIGURAÇÃO CHAVE PIX NO ADMIN -->
-        <div class="bg-white border p-4 rounded-xl shadow-sm space-y-2">
-            <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Configuração de Cobrança</h3>
-            <div class="flex flex-col md:flex-row gap-2">
-                <input type="text" id="adm-pix-key" placeholder="Insira a Chave PIX do seu Bolão" class="p-2 text-sm border rounded w-full focus:outline-none focus:ring-1 focus:ring-black">
-                <button onclick="salvarPixKeyAdmin()" class="bg-black text-white text-sm px-5 py-2 rounded font-bold hover:bg-gray-800 transition">Salvar Chave PIX</button>
-            </div>
-        </div>
-
-        <div class="bg-blue-50 border border-blue-200 p-4 rounded-xl space-y-4 shadow-sm">
-            <h3 class="font-bold text-blue-900 text-sm uppercase tracking-wider">1. Processamento Semanal & Configuração do Sorteio Atual</h3>
-            <div class="grid md:grid-cols-2 gap-3 text-sm">
-                <div>
-                    <label class="block text-xs font-semibold text-gray-700 mb-1">Valor Estimado do Prêmio Atual (R$):</label>
-                    <input type="text" id="adm-sorteio-premio-val" placeholder="Ex: 45.000.000,00" class="p-2 border rounded w-full focus:outline-none focus:ring-1 focus:ring-blue-500">
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold text-gray-700 mb-1">Data e Hora Oficial do Sorteio:</label>
-                    <input type="text" id="adm-sorteio-data-val" placeholder="Ex: Quinta 10/10/2026 às 20h" class="p-2 border rounded w-full focus:outline-none focus:ring-1 focus:ring-blue-500">
-                </div>
-            </div>
-            <div class="flex flex-wrap gap-2 pt-2 justify-between items-center">
-                <button onclick="salvarInformacoesSorteio()" class="bg-blue-800 text-white px-4 py-2 rounded font-bold hover:bg-blue-900 text-xs shadow">💾 Salvar Configurações do Sorteio</button>
-                <button onclick="fazerApostaGeral()" class="bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700 text-xs shadow flex items-center gap-1">🎲 Gerar Rodada Semanal</button>
-            </div>
-        </div>
-
-        <!-- REESTRUTURAÇÃO: APURAÇÃO EM DUAS ETAPAS SOLICITADA -->
-        <div class="bg-amber-50 border border-amber-200 p-4 rounded-xl space-y-4">
-            <h3 class="font-bold text-amber-900 text-sm uppercase tracking-wider">2. Apuração por Etapas e Conferência</h3>
-            
-            <!-- ETAPA 1: SELECIONAR E CONFERIR JOGOS -->
-            <div class="grid md:grid-cols-2 gap-3 border-b border-amber-200 pb-4">
-                <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-0.5">Selecione a Rodada Gerada:</label>
-                    <select id="adm-concurso-id" class="w-full p-2 text-sm border bg-white rounded focus:outline-none"></select>
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-0.5">6 Números Sorteados Oficiais:</label>
-                    <div class="flex gap-2">
-                        <input type="text" id="adm-dezenas-sorteadas" placeholder="Ex: 05,14,23,32,48,57" class="w-full p-2 text-sm border rounded font-mono focus:outline-none">
-                        <button onclick="executarEtapa1Conferencia()" class="bg-amber-700 text-white text-xs px-4 py-2 rounded font-bold hover:bg-amber-800 shrink-0 shadow">1. Verificar Acertos</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ETAPA 2: HABILITADA APENAS APÓS CONFERÊNCIA DA ETAPA 1 -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-gray-600 mb-0.5">Valor do Prêmio Total Conquistado pelo Grupo (R$):</label>
-                <div class="flex flex-col md:flex-row gap-3">
-                    <input type="number" id="adm-premio-total" placeholder="Informe o prêmio apenas após validar acertos" disabled class="p-2 text-sm border rounded w-full bg-gray-100 disabled:opacity-60 disabled:cursor-not-allowed font-medium focus:outline-none">
-                    <button id="btn-etapa2-rateio" onclick="executarEtapa2Rateio()" disabled class="bg-gray-400 text-white text-sm px-6 py-2 rounded-lg font-bold cursor-not-allowed shadow transition whitespace-nowrap">2. Ratear e Finalizar Rodada</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- LISTA GERAL DE PARTICIPANTES -->
-        <div class="space-y-2">
-            <div class="flex justify-between items-center">
-                <h3 class="font-bold text-gray-700 text-sm uppercase tracking-wider">Participantes Cadastrados</h3>
-                <label class="flex items-center gap-1.5 text-xs text-gray-700 font-medium cursor-pointer bg-white px-3 py-1.5 border rounded-lg shadow-sm">
-                    <input type="checkbox" id="filtro-apenas-ativos" checked onchange="renderizarTabelaParticipantes()" class="rounded border-gray-300 text-green-600 focus:ring-green-500">
-                    Mostrar Apenas Ativos
-                </label>
-            </div>
-            <div class="overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
-                <table class="w-full bg-white text-left border-collapse">
-                    <thead>
-                        <tr class="bg-gray-100 text-gray-700 border-b border-gray-200 text-xs uppercase font-bold">
-                            <th class="p-3">Nome</th>
-                            <th class="p-3">Plano</th>
-                            <th class="p-3">Jogos Fixos</th>
-                            <th class="p-3">Chave PIX</th>
-                            <th class="p-3">Saldo Créditos</th>
-                            <th class="p-3 text-center">Status / Ações</th>
-                        </tr>
-                    </thead>
-                    <tbody id="admin-table-body" class="divide-y divide-gray-100"></tbody>
-                </table>
-            </div>
-        </div>
-    </section>
-</div>
-
-<!-- ADIÇÃO: TELA MODAL DE EXIBIÇÃO DE VALORES E PARTICIPANTES APÓS RATEIO -->
-<div id="modal-rateio-container" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4 max-h-[85vh] flex flex-col justify-between">
+<body>
+  <div id="progress" class="progress" hidden></div>
+
+  <header class="app-header">
+    <div class="app-header__inner">
+      <a class="brand" href="./" aria-label="Bolão Mega Sena - início">
+        <span class="brand__logo" aria-hidden="true">6</span>
+        <span>
+          <span class="brand__name">Bolão Mega Sena</span><br>
+          <span class="brand__tag">Bolão mensal entre amigos</span>
+        </span>
+      </a>
+      <nav class="header-actions">
+        <button class="btn btn--ghost btn--sm" data-action="open-help" data-show="guest user">❓ <span class="btn__text">Ajuda</span></button>
+        <button class="btn btn--outline btn--sm" data-action="install" data-show="user">⬇️ <span class="btn__text">Instalar app</span></button>
+        <button class="btn btn--outline btn--sm" data-action="logout" data-show="user admin">Sair</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ================= LOGIN ================= -->
+    <section id="view-login" class="view stack-lg" data-view="guest">
+      <div class="notice notice--warn narrow">
+        <span class="notice__icon" aria-hidden="true">🎲</span>
         <div>
-            <div class="flex items-center justify-between border-b pb-2 mb-3">
-                <h3 class="text-xl font-bold text-green-700">🏆 Resumo do Rateio</h3>
-                <span class="text-xs bg-green-100 text-green-800 font-bold px-2 py-0.5 rounded-full">Sucesso</span>
-            </div>
-            <div class="grid grid-cols-2 gap-2 bg-gray-50 p-3 rounded-lg border text-sm mb-4">
-                <div>
-                    <span class="text-xs text-gray-500 block">Prêmio Total do Grupo:</span>
-                    <strong id="modal-total-premio" class="text-base text-gray-800">R$ 0,00</strong>
-                </div>
-                <div>
-                    <span class="text-xs text-gray-500 block">Participantes com Cota:</span>
-                    <strong id="modal-total-participantes" class="text-base text-gray-800">0</strong>
-                </div>
-            </div>
-            <p class="text-xs font-bold text-gray-600 uppercase tracking-wider mb-1">Demonstrativo de Repasse por Membro:</p>
-            <div id="modal-lista-rateio" class="divide-y overflow-y-auto max-h-56 pr-1 border rounded-lg p-2 bg-white">
-                <!-- Populado dinamicamente via JS -->
-            </div>
+          <p><strong>Bem-vindo(a) ao nosso bolão!</strong></p>
+          <p>Este é um site de gestão independente e <strong>não possui vínculo oficial com a Caixa Econômica Federal</strong>.</p>
+          <p>Participamos dos sorteios de <strong>quinta-feira</strong>. Os jogos da rodada são registrados na quarta-feira, impreterivelmente até as <strong>17:00</strong>.</p>
+          <p>Se o sorteio de quinta for adiado ou cancelado, os jogos valem automaticamente para o <strong>próximo sorteio</strong> (geralmente sábado).</p>
         </div>
-        <button onclick="fecharModalRateio()" class="w-full bg-gray-800 text-white font-bold py-2.5 rounded-lg shadow hover:bg-gray-900 transition text-sm">Fechar Relatório</button>
-    </div>
-</div>
+      </div>
 
-<!-- MODAL DETALHES DO PLANO -->
-<div id="modal-detalhes-plano" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-    <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 space-y-4">
-        <h3 class="text-lg font-bold text-gray-800 border-b pb-2">ℹ️ Detalhes dos Planos</h3>
-        <p class="text-sm text-gray-600 leading-relaxed">
-            O valor cobrado nos planos é referente ao valor de custo oficial de cada jogo (R$ 6,00 por aposta na Mega Sena) mais uma taxa de serviço.
-        </p>
-        <p class="text-sm text-gray-600 leading-relaxed font-semibold">
-            Esta taxa serve especificamente para administrar a infraestrutura técnica e manter o sistema do bolão sempre ativo e atualizado.
-        </p>
-        <button onclick="fecharModalDetalhesPlano()" class="w-full bg-blue-600 text-white font-bold py-2 rounded-lg text-sm hover:bg-blue-700 transition">Entendi</button>
-    </div>
-</div>
+      <div class="card narrow">
+        <h1 class="page-title">Área do participante</h1>
+        <p class="page-subtitle small">Entre com seu WhatsApp e data de nascimento.</p>
 
-<!-- COMPARTILHAR BOLÃO LOGIC -->
-<script>
-    function compartilharBolao(opcao) {
-        const mensagem = "Oi, estou participando desse bolão mensal, que tal participar para aumentar nossas chances https://leonardosilva-ti.github.io/bolaovidanova/";
-        if (opcao === 'whatsapp') {
-            const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(mensagem)}`;
-            window.open(url, '_blank');
-        } else {
-            navigator.clipboard.writeText(mensagem).then(() => {
-                alert("Mensagem de convite copiada com sucesso!");
-            }).catch(() => {
-                alert("Erro ao copiar o link. Compartilhe: https://leonardosilva-ti.github.io/bolaovidanova/");
-            });
-        }
-    }
-
-    function toggleTodosJogosSorteio() {
-        const cont = document.getElementById('container-todos-jogos-sorteio');
-        const icon = document.getElementById('icon-toggle-todos-jogos');
-        if (cont.classList.contains('hidden')) {
-            cont.classList.remove('hidden');
-            icon.style.transform = 'rotate(180deg)';
-        } else {
-            cont.classList.add('hidden');
-            icon.style.transform = 'rotate(0deg)';
-        }
-    }
-
-    function showInstallModal() {
-        const modal = document.getElementById('modal-instalar-app');
-        const instructions = document.getElementById('instalar-instructions');
-        
-        // Simples detecção de OS
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-        
-        if (isIOS) {
-            instructions.innerHTML = `
-                <div class="space-y-3 text-sm text-gray-700">
-                    <p>Para instalar no seu <strong>iPhone / iPad</strong>:</p>
-                    <ol class="list-decimal list-inside space-y-2 ml-1">
-                        <li>Toque no ícone <strong>Compartilhar</strong> <svg class="inline w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg> na barra inferior (Safari).</li>
-                        <li>Role o menu para baixo e selecione <strong>Adicionar à Tela de Início</strong>.</li>
-                        <li>Confirme tocando em <strong>Adicionar</strong>.</li>
-                    </ol>
-                </div>
-            `;
-        } else {
-            instructions.innerHTML = `
-                <div class="space-y-3 text-sm text-gray-700">
-                    <p>Para instalar no seu <strong>Android</strong>:</p>
-                    <ol class="list-decimal list-inside space-y-2 ml-1">
-                        <li>Toque no ícone de <strong>Menu (3 pontinhos)</strong> no canto superior do navegador.</li>
-                        <li>Selecione <strong>Adicionar à tela inicial</strong> (ou Instalar aplicativo).</li>
-                        <li>Confirme tocando em <strong>Adicionar</strong>.</li>
-                    </ol>
-                </div>
-            `;
-        }
-        
-        modal.classList.remove('hidden');
-        modal.classList.add('flex');
-    }
-
-    function closeInstallModal() {
-        const modal = document.getElementById('modal-instalar-app');
-        modal.classList.add('hidden');
-        modal.classList.remove('flex');
-    }
-
-    // Dynamic Manifest Injection
-    (function injectManifest() {
-        const manifest = {
-            "name": "Bolão Mensal",
-            "short_name": "Bolão",
-            "start_url": window.location.href,
-            "display": "standalone",
-            "background_color": "#ffffff",
-            "theme_color": "#15803d",
-            "icons": [
-                {
-                    "src": "https://cdn-icons-png.flaticon.com/512/1055/1055661.png",
-                    "sizes": "512x512",
-                    "type": "image/png"
-                }
-            ]
-        };
-        const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
-        const manifestURL = URL.createObjectURL(blob);
-        let link = document.createElement('link');
-        link.rel = 'manifest';
-        link.href = manifestURL;
-        document.head.appendChild(link);
-    })();
-</script>
-
-<!-- MODAL INSTALAR APP -->
-<div id="modal-instalar-app" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-50 p-4 backdrop-blur-sm">
-    <div class="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl transform transition-all">
-        <div class="bg-blue-600 p-4 text-center">
-            <h3 class="text-xl font-bold text-white uppercase tracking-wider">Instalar Aplicativo</h3>
-            <p class="text-blue-100 text-xs mt-1">Acesso rápido e tela cheia!</p>
-        </div>
-        <div class="p-6">
-            <div id="instalar-instructions">
-                <!-- Instructions injected via JS based on OS -->
+        <form id="form-login" class="stack" novalidate style="margin-top:20px">
+          <div class="field">
+            <label class="label" for="login-celular">Celular (WhatsApp)</label>
+            <input class="input" id="login-celular" name="celular" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="(00) 00000-0000" data-mask="phone" required>
+          </div>
+          <div class="field">
+            <label class="label" for="login-nascimento">Data de nascimento</label>
+            <div class="input-group">
+              <input class="input" id="login-nascimento" name="nascimento" type="text" inputmode="numeric" autocomplete="bday" placeholder="DD/MM/AAAA" maxlength="10" data-mask="date" required>
+              <button type="button" class="btn btn--outline btn--icon" data-action="open-calendar" data-target="login-nascimento" aria-label="Abrir calendário">📅</button>
+              <input type="date" class="date-proxy" data-proxy-for="login-nascimento" tabindex="-1" aria-hidden="true">
             </div>
-            
-            <button onclick="closeInstallModal()" class="mt-6 w-full bg-gray-200 text-gray-800 font-bold py-2 px-4 rounded-lg hover:bg-gray-300 transition-colors">
-                Entendi
-            </button>
-        </div>
-    </div>
-</div>
+          </div>
+          <button type="submit" class="btn btn--primary btn--block btn--lg">Entrar no painel</button>
+        </form>
 
+        <div class="stack-sm center" style="margin-top:20px">
+          <p class="small">Ainda não participa? <button class="btn btn--link" data-action="go-register">Cadastre-se aqui</button></p>
+          <button class="btn btn--link small muted" data-action="go-admin-login">Acesso administrativo</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= CADASTRO ================= -->
+    <section id="view-register" class="view" data-view="guest" hidden>
+      <div class="card" style="max-width:760px;margin-inline:auto">
+        <div class="stepper" aria-hidden="true">
+          <span class="stepper__item" data-step-indicator="1"></span>
+          <span class="stepper__item" data-step-indicator="2"></span>
+          <span class="stepper__item" data-step-indicator="3"></span>
+        </div>
+
+        <!-- Etapa 1: dados -->
+        <form id="form-register-1" class="stack" data-step="1" novalidate>
+          <div>
+            <p class="section-title">Etapa 1 de 3</p>
+            <h2 class="page-title">Seus dados</h2>
+          </div>
+          <div class="notice notice--warn small">
+            <span class="notice__icon" aria-hidden="true">📱</span>
+            <p>Informe seu WhatsApp real: ele é seu login e é por ele que avisamos sobre rateios premiados.</p>
+          </div>
+          <div class="field">
+            <label class="label" for="reg-nome">Nome completo</label>
+            <input class="input" id="reg-nome" type="text" autocomplete="name" placeholder="Seu nome completo" maxlength="100" required>
+          </div>
+          <div class="grid-2">
+            <div class="field">
+              <label class="label" for="reg-celular">Celular (WhatsApp)</label>
+              <input class="input" id="reg-celular" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="(00) 00000-0000" data-mask="phone" required>
+            </div>
+            <div class="field">
+              <label class="label" for="reg-nascimento">Data de nascimento</label>
+              <div class="input-group">
+                <input class="input" id="reg-nascimento" type="text" inputmode="numeric" autocomplete="bday" placeholder="DD/MM/AAAA" maxlength="10" data-mask="date" required>
+                <button type="button" class="btn btn--outline btn--icon" data-action="open-calendar" data-target="reg-nascimento" aria-label="Abrir calendário">📅</button>
+                <input type="date" class="date-proxy" data-proxy-for="reg-nascimento" tabindex="-1" aria-hidden="true">
+              </div>
+            </div>
+          </div>
+          <div class="row row--between">
+            <button type="button" class="btn btn--ghost" data-action="go-login">← Voltar</button>
+            <button type="submit" class="btn btn--info">Avançar</button>
+          </div>
+        </form>
+
+        <!-- Etapa 2: plano -->
+        <form id="form-register-2" class="stack" data-step="2" novalidate hidden>
+          <div class="row row--between row--wrap">
+            <div>
+              <p class="section-title">Etapa 2 de 3</p>
+              <h2 class="page-title">Escolha seu plano</h2>
+            </div>
+            <button type="button" class="btn btn--outline btn--sm" data-action="open-dialog" data-dialog="dialog-planos">ℹ️ Sobre os valores</button>
+          </div>
+          <div class="grid-3">
+            <label class="choice">
+              <input type="radio" name="plano" value="Avulso">
+              <span class="choice__body">
+                <span class="choice__title">Avulso</span>
+                <span class="choice__price">R$ 7,25 <small>/jogo</small></span>
+                <span class="choice__desc">Carregue e jogue na próxima rodada. Sem fidelidade semanal.</span>
+                <span class="choice__foot"><span class="badge badge--brand">1 jogo · 1 sorteio</span></span>
+              </span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="plano" value="Padrão" checked>
+              <span class="choice__body">
+                <span class="choice__title">Padrão</span>
+                <span class="choice__price">R$ 28,00 <small>/mês</small></span>
+                <span class="choice__desc">Uma aposta por semana em seu nome, durante 4 semanas seguidas.</span>
+                <span class="choice__foot"><span class="badge badge--info">4 jogos no mês</span></span>
+              </span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="plano" value="Dobrado">
+              <span class="choice__body">
+                <span class="choice__title">Dobrado</span>
+                <span class="choice__price">R$ 54,00 <small>/mês</small></span>
+                <span class="choice__desc">Duas apostas por semana em seu nome, durante 4 semanas seguidas.</span>
+                <span class="choice__foot"><span class="badge badge--purple">8 jogos no mês</span></span>
+              </span>
+            </label>
+          </div>
+          <div class="row row--between">
+            <button type="button" class="btn btn--ghost" data-action="register-step" data-step="1">← Voltar</button>
+            <button type="submit" class="btn btn--info">Avançar</button>
+          </div>
+        </form>
+
+        <!-- Etapa 3: tipo de aposta -->
+        <form id="form-register-3" class="stack" data-step="3" novalidate hidden>
+          <div>
+            <p class="section-title">Etapa 3 de 3</p>
+            <h2 class="page-title">Como gerar seus jogos?</h2>
+          </div>
+          <div class="grid-2">
+            <label class="choice choice--center">
+              <input type="radio" name="tipo" value="Aleatório" checked>
+              <span class="choice__body">
+                <span class="choice__emoji" aria-hidden="true">🎲</span>
+                <span class="choice__title">Modo aleatório</span>
+                <span class="choice__desc">Surpresinha: o sistema gera dezenas novas para você a cada rodada.</span>
+              </span>
+            </label>
+            <label class="choice choice--center">
+              <input type="radio" name="tipo" value="Número da sorte">
+              <span class="choice__body">
+                <span class="choice__emoji" aria-hidden="true">🎯</span>
+                <span class="choice__title">Números da sorte</span>
+                <span class="choice__desc">Você escolhe suas 6 dezenas e elas são apostadas em todas as rodadas.</span>
+              </span>
+            </label>
+          </div>
+
+          <div id="reg-numeros" class="card card--flat stack" hidden>
+            <div class="field">
+              <span class="label">Dezenas do jogo 1</span>
+              <div class="numbers" data-numbers="reg-j1"></div>
+            </div>
+            <div class="field" id="reg-jogo2" hidden>
+              <span class="label" style="color:var(--purple)">Dezenas do jogo 2 (plano Dobrado)</span>
+              <div class="numbers numbers--purple" data-numbers="reg-j2"></div>
+            </div>
+            <p class="hint">Digite números de 01 a 60, sem repetir.</p>
+          </div>
+
+          <div class="row row--between">
+            <button type="button" class="btn btn--ghost" data-action="register-step" data-step="2">← Voltar</button>
+            <button type="submit" class="btn btn--primary">Finalizar cadastro</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- ================= PAINEL DO PARTICIPANTE ================= -->
+    <section id="view-dashboard" class="view stack-lg" data-view="user" hidden>
+      <div class="hero">
+        <div class="row row--between row--wrap" style="position:relative;z-index:1">
+          <div>
+            <h1 class="page-title">Olá, <span id="dash-nome"></span>!</h1>
+            <p class="page-subtitle small">Acompanhe seus créditos, jogos e resultados.</p>
+          </div>
+          <button class="btn btn--ghost btn--sm" data-action="refresh-dashboard">↻ Atualizar</button>
+        </div>
+        <div class="grid-stats" style="margin-top:18px">
+          <div class="stat"><p class="stat__label">Plano</p><p class="stat__value" id="dash-plano">—</p></div>
+          <div class="stat"><p class="stat__label">Créditos</p><p class="stat__value"><span id="dash-creditos">0</span> <span class="small">rodada(s)</span></p></div>
+          <div class="stat"><p class="stat__label">Modo</p><p class="stat__value" id="dash-tipo">—</p></div>
+          <div class="stat"><p class="stat__label">Próximo ciclo</p><p class="stat__value" id="dash-futuro">—</p></div>
+        </div>
+      </div>
+
+      <div id="aviso-recarga" class="notice notice--danger" hidden>
+        <span class="notice__icon" aria-hidden="true">⚠️</span>
+        <p id="aviso-recarga-texto"></p>
+      </div>
+
+      <div class="grid-3">
+        <!-- Meus números -->
+        <article class="card card--fill">
+          <header class="card__header">
+            <h2 class="card__title">Seus números</h2>
+            <span class="card__icon" aria-hidden="true">🎯</span>
+          </header>
+          <div id="dash-jogos" class="stack-sm"></div>
+        </article>
+
+        <!-- Sorteio atual -->
+        <article class="card card--fill">
+          <header class="card__header">
+            <h2 class="card__title">Sorteio atual</h2>
+            <span class="card__icon" aria-hidden="true">🏆</span>
+          </header>
+          <dl style="margin:0">
+            <div class="kv"><dt>Prêmio estimado</dt><dd class="text-brand" id="dash-sorteio-premio">—</dd></div>
+            <div class="kv"><dt>Data do sorteio</dt><dd id="dash-sorteio-data">—</dd></div>
+          </dl>
+          <div class="stack-sm" style="margin-top:12px">
+            <p class="section-title">Seus jogos nesta rodada</p>
+            <div id="dash-rodada-meus"></div>
+          </div>
+          <details class="disclosure" style="margin-top:12px">
+            <summary>Ver todos os jogos do grupo</summary>
+            <div class="disclosure__body scroll-y stack-sm" id="dash-rodada-todos"></div>
+          </details>
+        </article>
+
+        <!-- Renovação -->
+        <article class="card card--brand card--fill">
+          <header class="card__header">
+            <h2 class="card__title">Renovação de créditos</h2>
+            <span class="card__icon" aria-hidden="true">💸</span>
+          </header>
+          <p class="small muted">Transfira o valor do seu plano via PIX e avise o administrador para liberar mais rodadas.</p>
+          <div class="field" style="margin-top:14px">
+            <label class="label" for="dash-pix-bolao">Chave PIX do bolão</label>
+            <div class="input-group">
+              <input class="input mono" id="dash-pix-bolao" type="text" readonly>
+              <button class="btn btn--primary" data-action="copy-pix">Copiar</button>
+            </div>
+          </div>
+          <div class="card__footer">
+            <button class="btn btn--primary btn--block" data-action="notify-payment">👉 Já paguei, avisar admin</button>
+          </div>
+        </article>
+      </div>
+
+      <!-- Configurações -->
+      <div class="grid-3">
+        <form id="form-jogos" class="card card--flat card--fill" novalidate>
+          <h2 class="card__title">Alterar meus números</h2>
+          <div class="field" style="margin-top:12px">
+            <label class="label" for="dash-edit-tipo">Modo de jogo</label>
+            <select class="select" id="dash-edit-tipo">
+              <option value="Aleatório">Aleatório (surpresinha semanal)</option>
+              <option value="Número da sorte">Números da sorte (fixos)</option>
+            </select>
+          </div>
+          <div id="dash-edit-numeros" class="stack-sm" style="margin-top:12px" hidden>
+            <span class="label">Jogo 1</span>
+            <div class="numbers" data-numbers="edit-j1"></div>
+            <div id="dash-edit-jogo2" class="stack-sm" hidden>
+              <span class="label" style="color:var(--purple)">Jogo 2 (plano Dobrado)</span>
+              <div class="numbers numbers--purple" data-numbers="edit-j2"></div>
+            </div>
+          </div>
+          <div class="card__footer">
+            <button type="submit" class="btn btn--info btn--block btn--sm">Salvar jogos</button>
+          </div>
+        </form>
+
+        <form id="form-plano" class="card card--flat card--fill" novalidate>
+          <h2 class="card__title">Plano do próximo ciclo</h2>
+          <p class="small muted" style="margin-top:4px">A mudança vale quando seus créditos atuais acabarem.</p>
+          <div class="field" style="margin-top:12px">
+            <label class="label" for="dash-next-plano">Novo plano</label>
+            <select class="select" id="dash-next-plano">
+              <option value="">Manter o plano atual</option>
+              <option value="Avulso">Avulso (R$ 7,25)</option>
+              <option value="Padrão">Padrão (R$ 28,00)</option>
+              <option value="Dobrado">Dobrado (R$ 54,00)</option>
+            </select>
+          </div>
+          <div class="card__footer">
+            <button type="submit" class="btn btn--purple btn--block btn--sm">Agendar alteração</button>
+          </div>
+        </form>
+
+        <form id="form-pix" class="card card--flat card--fill" novalidate>
+          <h2 class="card__title">Minha chave PIX</h2>
+          <p class="small muted" style="margin-top:4px">Para recebermos e repassarmos seus prêmios.</p>
+          <div class="field" style="margin-top:12px">
+            <label class="label" for="dash-minha-pix">Chave PIX</label>
+            <input class="input" id="dash-minha-pix" type="text" maxlength="120" placeholder="CPF, e-mail, celular ou chave aleatória">
+          </div>
+          <div class="card__footer">
+            <button type="submit" class="btn btn--primary btn--block btn--sm">Salvar chave PIX</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="banner">
+        <div>
+          <p style="color:#fff;font-weight:700;font-size:15px">🤝 Convide seus amigos</p>
+          <p>Mais gente no bolão, mais chances para o grupo!</p>
+        </div>
+        <div class="row">
+          <button class="btn btn--whatsapp btn--sm" data-action="share-whatsapp">📱 WhatsApp</button>
+          <button class="btn btn--outline btn--sm" data-action="share-link">🔗 Copiar convite</button>
+        </div>
+      </div>
+
+      <div class="grid grid-history">
+        <article class="card">
+          <header class="card__header"><h2 class="card__title">Últimas recargas</h2><span class="badge">até 4</span></header>
+          <div id="hist-pagamentos" class="stack-sm"></div>
+        </article>
+        <article class="card">
+          <header class="card__header"><h2 class="card__title">Últimos sorteios</h2><span class="badge">até 12</span></header>
+          <div id="hist-sorteios" class="stack-sm scroll-y scroll-y--lg"></div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ================= LOGIN ADMIN ================= -->
+    <section id="view-admin-login" class="view" data-view="guest" hidden>
+      <form id="form-admin-login" class="card narrow stack" novalidate>
+        <div>
+          <h1 class="page-title">Administração</h1>
+          <p class="page-subtitle small">Acesso restrito ao organizador do bolão.</p>
+        </div>
+        <div class="field">
+          <label class="label" for="admin-user">Usuário</label>
+          <input class="input" id="admin-user" type="text" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label class="label" for="admin-pass">Senha</label>
+          <input class="input" id="admin-pass" type="password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn btn--dark btn--block btn--lg">Entrar</button>
+        <button type="button" class="btn btn--ghost btn--block" data-action="go-login">← Voltar ao site</button>
+      </form>
+    </section>
+
+    <!-- ================= PAINEL ADMIN ================= -->
+    <section id="view-admin" class="view stack-lg" data-view="admin" hidden>
+      <div class="row row--between row--wrap">
+        <div>
+          <h1 class="page-title">Painel administrativo</h1>
+          <p class="page-subtitle small" id="adm-resumo"></p>
+        </div>
+        <button class="btn btn--outline btn--sm" data-action="refresh-admin">↻ Atualizar</button>
+      </div>
+
+      <div class="grid-2">
+        <form id="form-adm-pix" class="card stack" novalidate>
+          <header class="card__header" style="margin:0"><h2 class="card__title">Cobrança</h2><span class="card__icon" aria-hidden="true">🏦</span></header>
+          <div class="field">
+            <label class="label" for="adm-pix">Chave PIX do bolão</label>
+            <input class="input mono" id="adm-pix" type="text" maxlength="120" placeholder="Chave que os participantes vão usar">
+          </div>
+          <button type="submit" class="btn btn--dark">Salvar chave PIX</button>
+        </form>
+
+        <form id="form-adm-sorteio" class="card stack" novalidate>
+          <header class="card__header" style="margin:0"><h2 class="card__title">1. Sorteio da semana</h2><span class="card__icon" aria-hidden="true">📅</span></header>
+          <div class="grid-2" style="gap:12px">
+            <div class="field">
+              <label class="label" for="adm-premio-estimado">Prêmio estimado (R$)</label>
+              <input class="input" id="adm-premio-estimado" type="text" placeholder="Ex: 45.000.000,00">
+            </div>
+            <div class="field">
+              <label class="label" for="adm-data-sorteio">Data e hora</label>
+              <input class="input" id="adm-data-sorteio" type="text" placeholder="Ex: Quinta 10/10 às 20h">
+            </div>
+          </div>
+          <div class="row row--wrap">
+            <button type="submit" class="btn btn--info grow">💾 Salvar informações</button>
+            <button type="button" class="btn btn--primary grow" data-action="gerar-rodada">🎲 Gerar rodada semanal</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card stack" style="border-color:var(--warn-border)">
+        <header class="card__header" style="margin:0"><h2 class="card__title">2. Apuração do resultado</h2><span class="card__icon" aria-hidden="true">🧮</span></header>
+        <div class="grid-2" style="gap:12px">
+          <div class="field">
+            <label class="label" for="adm-rodada">Rodada aberta</label>
+            <select class="select" id="adm-rodada"></select>
+          </div>
+          <div class="field">
+            <label class="label" for="adm-dezenas">6 números sorteados</label>
+            <div class="input-group">
+              <input class="input mono" id="adm-dezenas" type="text" inputmode="numeric" placeholder="05, 14, 23, 32, 48, 57">
+              <button type="button" class="btn btn--warn" data-action="conferir">Conferir</button>
+            </div>
+          </div>
+        </div>
+        <div id="adm-conferencia" class="notice" hidden></div>
+        <div class="field">
+          <label class="label" for="adm-premio-total">Prêmio total recebido pelo grupo (R$)</label>
+          <div class="input-group">
+            <input class="input" id="adm-premio-total" type="number" min="0" step="0.01" placeholder="Disponível após a conferência" disabled>
+            <button type="button" class="btn btn--warn" id="btn-ratear" data-action="ratear" disabled>Ratear e finalizar</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="row row--between row--wrap">
+          <h2 class="card__title">Participantes</h2>
+          <div class="row row--wrap">
+            <input class="input" id="adm-busca" type="search" placeholder="Buscar por nome ou celular" style="min-height:36px;width:min(260px,100%)">
+            <label class="checkbox"><input type="checkbox" id="adm-filtro-ativos" checked> Apenas ativos</label>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>Plano</th>
+                <th>Jogos</th>
+                <th>Chave PIX</th>
+                <th>Créditos</th>
+                <th style="text-align:right">Status / ações</th>
+              </tr>
+            </thead>
+            <tbody id="adm-tabela"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    Bolão independente, sem vínculo com a Caixa Econômica Federal. Jogue com responsabilidade.
+  </footer>
+
+  <!-- ================= DIÁLOGOS ================= -->
+  <dialog class="modal" id="dialog-planos">
+    <div class="modal__header"><h3 class="modal__title">ℹ️ Sobre os valores</h3></div>
+    <div class="modal__body stack-sm small">
+      <p>O valor dos planos corresponde ao custo oficial de cada aposta da Mega Sena (R$ 6,00) mais uma taxa de serviço.</p>
+      <p><strong>A taxa cobre a infraestrutura técnica e mantém o sistema do bolão sempre ativo e atualizado.</strong></p>
+    </div>
+    <div class="modal__footer"><button class="btn btn--info" data-action="close-dialog">Entendi</button></div>
+  </dialog>
+
+  <dialog class="modal" id="dialog-install">
+    <div class="modal__header"><h3 class="modal__title">Instalar aplicativo</h3></div>
+    <div class="modal__body small" id="install-instructions"></div>
+    <div class="modal__footer"><button class="btn btn--outline" data-action="close-dialog">Entendi</button></div>
+  </dialog>
+
+  <dialog class="modal" id="dialog-help">
+    <form id="form-help" class="stack" novalidate>
+      <div class="modal__header"><h3 class="modal__title">Precisa de ajuda?</h3></div>
+      <div class="modal__body stack">
+        <p class="small muted">Envie sua dúvida e o administrador entrará em contato pelo WhatsApp.</p>
+        <div class="field">
+          <label class="label" for="help-nome">Nome</label>
+          <input class="input" id="help-nome" type="text" maxlength="100" required>
+        </div>
+        <div class="field">
+          <label class="label" for="help-celular">Celular (WhatsApp)</label>
+          <input class="input" id="help-celular" type="tel" inputmode="numeric" data-mask="phone" placeholder="(00) 00000-0000">
+        </div>
+        <div class="field">
+          <label class="label" for="help-mensagem">Mensagem</label>
+          <textarea class="textarea" id="help-mensagem" maxlength="2000" required></textarea>
+        </div>
+      </div>
+      <div class="modal__footer">
+        <button type="button" class="btn btn--ghost" data-action="close-dialog">Cancelar</button>
+        <button type="submit" class="btn btn--primary">Enviar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="dialog-rateio">
+    <div class="modal__header">
+      <h3 class="modal__title">🏆 Resumo do rateio</h3>
+      <span class="badge badge--brand">Finalizado</span>
+    </div>
+    <div class="modal__body stack">
+      <div class="grid-2" style="gap:10px">
+        <div class="card card--flat" style="padding:12px"><p class="xsmall muted">Prêmio total</p><p class="stat__value" id="rateio-total">R$ 0,00</p></div>
+        <div class="card card--flat" style="padding:12px"><p class="xsmall muted">Participantes</p><p class="stat__value" id="rateio-participantes">0</p></div>
+      </div>
+      <p class="section-title">Repasse por participante</p>
+      <div id="rateio-lista" class="stack-sm scroll-y"></div>
+    </div>
+    <div class="modal__footer">
+      <button class="btn btn--outline" data-action="email-rateio">✉️ Enviar por e-mail</button>
+      <button class="btn btn--dark" data-action="close-dialog">Fechar</button>
+    </div>
+  </dialog>
+
+  <dialog class="modal" id="dialog-confirm">
+    <div class="modal__header"><h3 class="modal__title" id="confirm-title">Confirmar</h3></div>
+    <div class="modal__body small" id="confirm-message"></div>
+    <div class="modal__footer">
+      <button class="btn btn--ghost" value="cancel" data-confirm="false">Cancelar</button>
+      <button class="btn btn--primary" value="ok" data-confirm="true" id="confirm-ok">Confirmar</button>
+    </div>
+  </dialog>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
 </body>
 </html>

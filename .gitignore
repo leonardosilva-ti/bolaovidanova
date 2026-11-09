@@ -1,0 +1,20 @@
+# O repositório é público (GitHub Pages): só o site vai para o GitHub.
+
+# Backend do Apps Script (é implantado pelo editor do Google / clasp)
+*.gs
+appsscript.json
+.clasp.json
+
+# Automação local
+automate/
+
+# Backups e temporários
+_backup_original/
+__pycache__/
+*.log
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Script local de deploy
+deploy.ps1
