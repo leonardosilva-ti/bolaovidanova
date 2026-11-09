@@ -188,16 +188,23 @@ export async function conferir(button) {
   conferido = { idSorteio, numerosSorteados };
   $("#adm-dezenas").value = numerosSorteados.replaceAll(",", ", ");
 
+  // Sem quadra, quina ou sena: fecha a rodada direto como não premiada (R$ 0,00)
+  if (!res.contemplado) {
+    toast("Nenhum jogo fez 4 ou mais acertos. Rodada fechada como não premiada.", "info");
+    await finalizar(button, 0);
+    return;
+  }
+
   const box = $("#adm-conferencia");
-  box.className = `notice ${res.contemplado ? "notice--success" : "notice--warn"}`;
+  box.className = "notice notice--success";
   box.textContent = res.message;
   box.hidden = false;
 
   const premio = $("#adm-premio-total");
-  premio.disabled = !res.contemplado;
-  premio.value = res.contemplado ? "" : "0";
+  premio.disabled = false;
+  premio.value = "";
   $("#btn-ratear").disabled = false;
-  if (res.contemplado) premio.focus();
+  premio.focus();
 }
 
 export async function ratear(button) {
@@ -210,6 +217,10 @@ export async function ratear(button) {
     { title: "Ratear e finalizar", okText: "Finalizar rodada" });
   if (!ok) return;
 
+  await finalizar(button, premioTotal);
+}
+
+async function finalizar(button, premioTotal) {
   const res = await withLoading(button, () =>
     api("finalizarRateioAdmin", { token: state.adminToken, ...conferido, premioTotal }));
   if (!res?.success) return toast(res?.message, "error");
